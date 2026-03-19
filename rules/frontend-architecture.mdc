@@ -1,0 +1,158 @@
+---
+description: Arquitetura Frontend v2 - Next.js 16 App Router, React 19, MUI 6, SSR e estrutura de pastas
+globs: redd-client-v2/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Arquitetura Frontend — Next.js 16 + React 19 + MUI 6
+
+## Stack Tecnológico
+
+| Tecnologia       | Versão | Uso                              |
+| ---------------- | ------ | -------------------------------- |
+| Next.js          | 16.x   | App Router (SSR + Client)        |
+| React            | 19.x   | UI Library                       |
+| TypeScript       | 5.x    | Strict mode + noUncheckedIndexed |
+| MUI              | 6.x    | Design System                    |
+| MUI X DataGrid   | 7.x    | Tabelas server-side              |
+| TanStack Query   | 5.x    | Server state (queries/mutations) |
+| React Hook Form  | 7.x    | Formulários                      |
+| Zod              | 4.x    | Validação de schema              |
+| nuqs             | 2.x    | URL state (filtros, paginação)   |
+| Axios            | 1.x    | HTTP Client                      |
+| date-fns         | 3.x    | Datas (NÃO luxon no frontend)    |
+| Sonner           | 1.x    | Toast notifications              |
+| @dnd-kit         | 6.x    | Drag and Drop (Kanban)           |
+
+## Estrutura de Pastas
+
+```
+redd-client-v2/src/
+├── app/
+│   ├── (auth)/                    # Rotas públicas (sign-in, reset-password)
+│   ├── (dashboard)/               # Rotas protegidas com layout
+│   │   ├── layout.tsx             # DashboardLayout (Sidebar + Header)
+│   │   ├── orders/page.tsx        # SSR page → Client Component
+│   │   ├── purchases/page.tsx
+│   │   ├── products/page.tsx
+│   │   ├── budgets-crm/page.tsx
+│   │   └── ...
+│   └── layout.tsx                 # Root layout (providers)
+├── components/
+│   ├── common/                    # Reutilizáveis: DateField, FilterChipList, etc.
+│   ├── layout/                    # Header, PageContainer, Sidebar
+│   │   └── providers/             # AppProviders, AuthProvider, ThemeProvider, QueryProvider
+│   └── features/                  # Componentes por feature
+│       ├── orders/
+│       ├── purchases/
+│       ├── products/
+│       ├── budgets/
+│       ├── productions/
+│       └── ...
+├── enums/                         # RoleEnum, OrderStatusEnum, etc. (28 arquivos)
+├── hooks/                         # Hooks globais: use-debounce, use-toast, use-file-url
+├── lib/
+│   ├── api/
+│   │   ├── client.ts              # Axios instance + 401 auto-refresh
+│   │   ├── http-client.ts         # HttpClient<T> base class
+│   │   ├── server.ts              # Server-side fetch (cookies + revalidate)
+│   │   ├── auth.ts                # Auth API calls
+│   │   └── resources/             # 43 API resources por entidade
+│   ├── auth/
+│   │   └── authorization.ts       # is(), isAny(), isOnly(), isAll()
+│   └── utils/
+│       ├── format.ts              # formatCurrency, formatDate, formatPhone
+│       └── cell-class.ts          # Helpers para DataGrid row classes
+├── styles/theme/                  # MUI theme: palette, typography, components
+└── types/
+    ├── api.ts                     # Pagination<T>, IncludeContract, RequestParams
+    ├── entities/user.ts           # User, Role interfaces
+    └── index.ts                   # Re-exports
+```
+
+## Feature Structure (Padrão por Feature)
+
+```
+features/{feature}/
+├── {Feature}Client.tsx              # Orquestrador: Provider + UI
+├── {Feature}DataGrid.tsx            # StyledDataGrid + paginação
+├── {Feature}Filters.tsx             # Barra de filtros
+├── columns/
+│   └── index.tsx                    # useXxxColumns() → GridColDef[]
+├── hooks/
+│   ├── use-{feature}.ts             # TanStack Query hooks + query keys
+│   ├── use-{feature}-context.tsx    # Provider (nuqs + Context)
+│   └── includes.ts                  # IncludeContract[]
+├── types/
+│   └── types.ts                     # Interfaces da feature
+├── dialogs/                         # Dialog components
+├── drawers/                         # Drawer components
+├── modals/                          # Modal components + schemas
+│   └── {action}/
+│       ├── {Action}Modal.tsx
+│       └── schema.ts               # Zod schema
+├── components/                      # Sub-componentes
+└── utils/                           # Helpers + styled components
+```
+
+## Fluxo de Dados
+
+```
+1. Page SSR (app/page.tsx)
+   ↓ fetch server-side (serverApi)
+2. Client Component ({Feature}Client.tsx)
+   ↓ props com dados SSR
+3. Provider (use-{feature}-context.tsx)
+   ↓ nuqs (URL state) + TanStack Query + Context
+4. UI Components (DataGrid, Filters, Modals)
+   ↓ useXxxContext() para acessar dados
+5. API Resources (lib/api/resources/)
+   ↓ Axios requests
+6. Backend (redd-api)
+```
+
+## Padrão de Page SSR
+
+```tsx
+// app/(dashboard)/orders/page.tsx
+export const dynamic = 'force-dynamic'
+
+async function OrdersContent() {
+  const [user, sellers, companies, statusList] = await Promise.all([
+    getCurrentUser(),
+    getSellers(),
+    getCompanies(),
+    getStatusList()
+  ])
+
+  return (
+    <OrdersClient
+      user={user}
+      sellers={sellers}
+      companies={companies}
+      statusList={statusList}
+    />
+  )
+}
+
+export default function OrdersPage() {
+  return (
+    <PageContainer title="Pedidos" actions={<CreateButton />}>
+      <Suspense fallback={<OrdersSkeleton />}>
+        <OrdersContent />
+      </Suspense>
+    </PageContainer>
+  )
+}
+```
+
+## Regras Críticas
+
+1. **Server Components** para data fetching SSR (sem `'use client'`)
+2. **Client Components** para interatividade (`'use client'` no topo)
+3. **`force-dynamic`** em pages que precisam de dados frescos
+4. **`Suspense`** com fallback skeleton em pages SSR
+5. **Types vivem na feature** (`features/{feature}/types/types.ts`), NÃO no API resource
+6. **API Resources re-exportam** types do feature
+7. **Imports relativos** dentro da feature (`../types/types`)
+8. **Imports absolutos** entre features/libs (`@/lib/api/resources/orders`)

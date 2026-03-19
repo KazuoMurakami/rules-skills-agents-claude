@@ -1,0 +1,150 @@
+---
+description: Padrões de Models Lucid ORM - Entidades, hooks, soft delete, relationships e segurança
+globs: redd-api/app/Models/**/*.ts
+alwaysApply: false
+---
+
+# Padrões de Models — Lucid ORM
+
+## Estrutura Base
+
+Todos os Models estendem `Model` base (inclui timestamps + soft delete via `Filterable` mixin):
+
+```typescript
+import { column, belongsTo, hasMany, computed, BelongsTo, HasMany, beforeFind, beforeFetch } from '@ioc:Adonis/Lucid/Orm';
+import Model from '../Model';
+import EntityFilter from '../Filters/{Domain}/EntityFilter';
+
+export default class Entity extends Model {
+  public static $filter = () => EntityFilter;
+  public static table = 'entities';
+
+  @column({ isPrimary: true })
+  public id: number;
+
+  @column({ columnName: 'name' })
+  public name: string;
+
+  @column({ columnName: 'status_id', serializeAs: 'statusId' })
+  public statusId: number;
+
+  // Soft delete hook — OBRIGATÓRIO
+  @beforeFind()
+  @beforeFetch()
+  public static ignoreDeleted(query) {
+    query.whereNull(`${this.table}.deleted_at`);
+  }
+
+  // Relationships
+  @belongsTo(() => Status)
+  public status: BelongsTo<typeof Status>;
+
+  @hasMany(() => Item)
+  public items: HasMany<typeof Item>;
+}
+```
+
+## Convenções de Colunas
+
+| Padrão             | Regra                                    |
+| ------------------ | ---------------------------------------- |
+| Mapeamento         | DB `snake_case` → TS `camelCase`         |
+| `columnName`       | Sempre especificar quando difere do TS   |
+| `serializeAs`      | Controla nome no JSON de saída           |
+| Dados sensíveis    | `serializeAs: null` (password, tokens)   |
+| Timestamps         | Herdados do Model base (`createdAt`, `updatedAt`, `deletedAt`) |
+| DateTimes          | `@column.dateTime()` com serialização ISO |
+
+## Soft Delete — OBRIGATÓRIO
+
+```typescript
+// SEMPRE adicionar estes hooks em TODOS os models:
+@beforeFind()
+@beforeFetch()
+public static ignoreDeleted(query) {
+  query.whereNull(`${this.table}.deleted_at`);
+}
+```
+
+- O `destroy()` do Repository base seta `deletedAt = now()` (NÃO deleta do banco)
+- Usar `${this.table}.deleted_at` com prefixo da tabela (evita ambiguidade em JOINs)
+
+## Hooks do Lifecycle
+
+```typescript
+// Valores default na criação
+@beforeCreate()
+public static setDefaults(entity: Entity) {
+  if (!entity.statusId) {
+    entity.statusId = StatusEnum.PENDING;
+  }
+}
+
+// Hash de senha antes de salvar
+@beforeSave()
+public static async hashPassword(user: User) {
+  if (user.$dirty.password) {
+    user.password = await Hash.make(user.password);
+  }
+}
+
+// Log de alterações
+@beforeSave()
+public static async generateLog(entity: Entity) {
+  new LogRepository().generateLog(entity.id, 'entity', entity.$original, entity.$dirty);
+}
+
+// Invalidar cache após salvar
+@afterSave()
+public static async invalidateCache() {
+  await new RedisService().deleteKeysByPrefix('entities');
+}
+```
+
+## Computed Properties
+
+```typescript
+@computed()
+public get fullName(): string {
+  return `${this.firstName} ${this.lastName}`;
+}
+
+@computed()
+public get isRotting(): boolean {
+  if (!this.lastInteractionAt) return false;
+  const daysSince = DateTime.now().diff(this.lastInteractionAt, 'days').days;
+  return daysSince >= 3;
+}
+```
+
+- Computed properties são calculadas no serialization, NÃO no banco
+- Usar para dados derivados que não precisam de query
+
+## Relationships
+
+| Tipo          | Uso                              | Exemplo                    |
+| ------------- | -------------------------------- | -------------------------- |
+| `belongsTo`   | N:1 — pertence a                 | Order → Status             |
+| `hasOne`       | 1:1 — tem um                    | User → LastLocation        |
+| `hasMany`      | 1:N — tem vários                | Order → Purchases          |
+| `manyToMany`   | N:N — via pivot                 | User ↔ Roles               |
+
+```typescript
+// ManyToMany com pivot customizado
+@manyToMany(() => Role, {
+  pivotTable: 'user_roles',
+  pivotTimestamps: true,
+})
+public roles: ManyToMany<typeof Role>;
+
+// HasMany com orderBy
+@hasMany(() => Note, { foreignKey: 'entityId' })
+public notes: HasMany<typeof Note>;
+```
+
+## Segurança em Models
+
+- **NUNCA** serializar password/token: `serializeAs: null`
+- **SEMPRE** usar soft delete hooks em novos models
+- Validar enums no Validator, não no Model
+- Relacionamentos lazy por padrão — usar `preload()` explícito no Repository

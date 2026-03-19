@@ -1,0 +1,200 @@
+---
+description: Performance - Otimização de queries SQL, React rendering, bundle size e caching
+globs: redd-api/**/*.ts, redd-client-v2/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Performance — Backend e Frontend
+
+## Backend — Query Optimization
+
+### N+1 Problem — SEMPRE usar preload
+
+```typescript
+// ❌ N+1: Uma query por order para buscar seller
+const orders = await Order.query()
+for (const order of orders) {
+  await order.load('seller')  // N queries extras!
+}
+
+// ✅ Preload em batch: Uma query para orders + uma para sellers
+const orders = await Order.query()
+  .preload('seller', (q) => q.select('id', 'first_name', 'last_name'))
+  .preload('status', (q) => q.select('id', 'name', 'color'))
+```
+
+### Select apenas colunas necessárias
+
+```typescript
+// ✅ Listagem: Só o que aparece na tabela
+const orders = await Order.query()
+  .select('id', 'sales_number', 'customer_name', 'delivery_date', 'status_id', 'seller_id')
+  .preload('seller', (q) => q.select('id', 'first_name', 'last_name'))
+
+// ✅ Contagem sem carregar dados
+const count = await Order.query()
+  .where('status_id', StatusEnum.PENDING)
+  .count('* as total')
+```
+
+### Pagination — Limitar resultados
+
+```typescript
+// ✅ SEMPRE limitar perPage
+const perPage = Math.min(qs.perPage || 25, 1000)
+
+// ✅ Para tabelas grandes: Cursor-based pagination
+const orders = await Order.query()
+  .where('id', '<', lastId)
+  .orderBy('id', 'desc')
+  .limit(perPage)
+```
+
+### Índices no PostgreSQL
+
+```sql
+-- Índices para colunas frequentemente filtradas
+CREATE INDEX idx_orders_status_id ON orders(status_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_orders_seller_id ON orders(seller_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_orders_delivery_date ON orders(delivery_date) WHERE deleted_at IS NULL;
+
+-- Índice composto para filtros combinados
+CREATE INDEX idx_orders_status_seller ON orders(status_id, seller_id) WHERE deleted_at IS NULL;
+
+-- Partial index com soft delete (muito eficiente)
+CREATE INDEX idx_orders_active ON orders(id) WHERE deleted_at IS NULL;
+```
+
+### Cache Redis
+
+```typescript
+// ✅ Cache para dados que mudam pouco (lookups)
+const cacheKey = 'REDD:lists:categories'
+let categories = await Redis.get(cacheKey)
+if (!categories) {
+  categories = await Category.query().whereNull('deleted_at').exec()
+  await Redis.set(cacheKey, JSON.stringify(categories), 'EX', 3600) // 1h
+}
+
+// ✅ Invalidar no write
+await Redis.del('REDD:lists:categories')
+```
+
+## Frontend — React Performance
+
+### Memoização do Context Value
+
+```tsx
+// ✅ OBRIGATÓRIO: useMemo no value do Provider
+const value = useMemo<ContextData>(() => ({
+  orders: data?.data ?? [],
+  total: data?.total ?? 0,
+  isLoading,
+  isFetching,
+  queryParams,
+  setQueryParams,
+}), [data, isLoading, isFetching, queryParams, setQueryParams])
+
+return <Context.Provider value={value}>{children}</Context.Provider>
+```
+
+### useCallback para Props de Componentes Memoizados
+
+```tsx
+// ✅ Callback estável para componentes com memo()
+const handleEdit = useCallback((id: number) => {
+  setCurrentId(id)
+  setDrawerOpen(true)
+}, [])
+
+const handleDelete = useCallback((id: number) => {
+  deleteMutation.mutate(id)
+}, [deleteMutation])
+```
+
+### React.memo para Componentes em Lista
+
+```tsx
+// ✅ Memo em items de lista/kanban
+export const KanbanItem = memo(function KanbanItem({ item, onAction }: Props) {
+  return <Card>...</Card>
+})
+
+// ✅ Memo em colunas de DataGrid
+export function useOrderColumns({ onAction }: Params): GridColDef<Order>[] {
+  return useMemo(() => [
+    { field: 'id', headerName: 'ID', width: 80 },
+    // ...
+  ], [onAction])
+}
+```
+
+### TanStack Query — Otimizações
+
+```typescript
+// ✅ placeholderData evita flash de loading ao mudar filtros
+placeholderData: (prev) => prev
+
+// ✅ staleTime reduz requests desnecessários
+staleTime: 5 * 60 * 1000  // 5 min
+
+// ✅ Não refetch ao focar aba (dados não mudam tão rápido)
+refetchOnWindowFocus: false
+
+// ✅ Invalidação granular (não invalida tudo)
+queryClient.invalidateQueries({ queryKey: orderKeys.lists() })  // Só listas
+// NÃO: queryClient.invalidateQueries({ queryKey: orderKeys.all })  // Invalida tudo
+```
+
+### Bundle Size — MUI
+
+```tsx
+// ✅ Imports individuais (tree-shaking funciona)
+import Box from '@mui/material/Box'
+import Button from '@mui/material/Button'
+
+// ❌ Barrel imports (importa TUDO do MUI)
+import { Box, Button } from '@mui/material'
+
+// ✅ next.config.ts já otimiza:
+experimental: {
+  optimizePackageImports: ['@mui/material', '@mui/icons-material', 'date-fns']
+}
+```
+
+### Optimistic Updates (Kanban/Drag)
+
+```tsx
+// ✅ Padrão do projeto: Local state + background mutation
+const isMutating = useRef(false)
+
+useEffect(() => {
+  if (!isMutating.current) {
+    setLocalState(serverState)  // Sync quando não está mutando
+  }
+}, [serverState])
+
+const handleDragEnd = useCallback((event) => {
+  isMutating.current = true
+  setLocalState(newState)           // Atualiza UI imediatamente
+  mutation.mutate(newState)          // Salva no background
+}, [mutation])
+```
+
+## Checklist de Performance
+
+### Backend
+- [ ] Preload com select em TODAS queries com relacionamentos
+- [ ] Paginação limitada (max 1000)
+- [ ] Índices nas colunas filtradas (com partial index `WHERE deleted_at IS NULL`)
+- [ ] Cache Redis para lookups/listas estáticas
+- [ ] withCount em vez de carregar relação inteira para contagens
+
+### Frontend
+- [ ] useMemo no context value do Provider
+- [ ] useCallback em handlers passados como props
+- [ ] React.memo em componentes de lista
+- [ ] placeholderData em queries
+- [ ] Imports MUI individuais
+- [ ] Debounce em inputs de busca (500ms)
+- [ ] Invalidação granular de queries

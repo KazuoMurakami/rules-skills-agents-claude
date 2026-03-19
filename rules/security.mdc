@@ -1,0 +1,163 @@
+---
+description: Segurança - Prevenção de vulnerabilidades OWASP no backend (AdonisJS) e frontend (Next.js)
+globs: redd-api/**/*.ts, redd-client-v2/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Segurança — Backend e Frontend
+
+## Backend (redd-api)
+
+### SQL Injection — Prevenção
+
+```typescript
+// ✅ SEMPRE usar Lucid ORM (parametrizado automaticamente)
+const users = await User.query().where('email', email).first()
+const orders = await Order.query().whereIn('status_id', statusIds)
+
+// ✅ Raw queries com bindings
+const result = await Database.rawQuery(
+  'SELECT * FROM users WHERE email = ?',
+  [email]
+)
+
+// ❌ NUNCA interpolação direta
+const result = await Database.rawQuery(`SELECT * FROM users WHERE email = '${email}'`)
+```
+
+### IDOR (Insecure Direct Object Reference) — Prevenção
+
+```typescript
+// ✅ Validar que o recurso pertence ao usuário
+public async show({ params, auth }: HttpContextContract) {
+  const order = await this.repository.getOrFail(params.id)
+
+  // Verificar ownership (a menos que seja admin)
+  const user = auth.user!
+  if (!this.isAdmin(user) && order.sellerId !== user.id) {
+    throw new HttpException('Você não tem permissão para acessar este recurso', 403)
+  }
+
+  return order
+}
+
+// ✅ Validar FK com rules.exists() no Validator
+schema.number([rules.exists({ table: 'orders', column: 'id' })])
+```
+
+### Autenticação
+
+```typescript
+// ✅ Middleware auth em TODAS as rotas protegidas
+Route.group(() => { ... }).middleware('auth')
+
+// ✅ Rate limiting em login
+Route.post('/auth/sign-in', 'AuthController.postSignIn').middleware('rateLimit')
+
+// ✅ NUNCA expor tokens/senhas na serialização
+@column({ serializeAs: null })
+public password: string;
+
+@column({ serializeAs: null })
+public token: string;
+```
+
+### Dados Sensíveis
+
+```typescript
+// ✅ Filtrar dados sensíveis na resposta
+@column({ serializeAs: null })  // Nunca serializa para JSON
+public password: string;
+
+// ✅ Select específico em preloads (não trazer tudo)
+.preload('seller', (q) => q.select('id', 'firstName', 'lastName'))
+
+// ✅ Nunca logar dados sensíveis
+Logger.error('Auth failed', { email })  // OK
+Logger.error('Auth failed', { password })  // ❌ NUNCA
+```
+
+### Input Sanitization
+
+```typescript
+// ✅ Trim em TODAS as strings no Validator
+schema.string({ trim: true }, [rules.maxLength(255)])
+
+// ✅ Limitar tamanho de payloads
+schema.string({ trim: true }, [rules.maxLength(1000)])  // Descriptions
+schema.string({ trim: true }, [rules.maxLength(255)])   // Names
+
+// ✅ Validar enums
+schema.enum(Object.values(StatusEnum))
+```
+
+## Frontend (redd-client-v2)
+
+### XSS — Prevenção
+
+```tsx
+// ✅ React escapa automaticamente — usar JSX normalmente
+<Typography>{user.name}</Typography>
+
+// ❌ NUNCA usar dangerouslySetInnerHTML com dados do usuário
+<div dangerouslySetInnerHTML={{ __html: userInput }} />
+
+// ✅ Se necessário HTML, sanitizar primeiro
+import DOMPurify from 'dompurify'
+<div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(htmlContent) }} />
+```
+
+### Token Management
+
+```typescript
+// ✅ Token em httpOnly cookie (gerenciado pelo server)
+// O token é armazenado em cookie 'redd.token'
+// Axios interceptor adiciona Bearer token automaticamente
+
+// ❌ NUNCA armazenar token em localStorage
+localStorage.setItem('token', token)  // Vulnerável a XSS
+```
+
+### API Calls
+
+```typescript
+// ✅ SEMPRE usar API Resources (centralizado)
+const order = await ordersResource.getById(id)
+
+// ❌ NUNCA construir URLs com input do usuário
+const url = `/api/orders/${userInput}`  // Pode ser manipulado
+
+// ✅ Validar dados antes de enviar
+const validData = entitySchema.parse(formData)  // Zod valida
+await ordersResource.create(validData)
+```
+
+### Autorização no Frontend
+
+```typescript
+// ✅ Verificar roles antes de exibir ações
+{isAny(user, [RoleEnum.ADMIN, RoleEnum.SUPER_ADMIN]) && (
+  <Button onClick={handleDelete}>Excluir</Button>
+)}
+
+// ⚠️ Frontend auth é UX, NÃO segurança — backend DEVE validar também
+```
+
+## Checklist de Segurança
+
+### Backend
+- [ ] Queries via Lucid ORM (sem interpolação)
+- [ ] `rules.exists()` em todas FK (previne IDOR)
+- [ ] `serializeAs: null` em campos sensíveis
+- [ ] `{ trim: true }` em todas strings do Validator
+- [ ] `maxLength` em todas strings
+- [ ] Rate limiting em auth/webhooks
+- [ ] Ownership check em endpoints de recurso
+- [ ] Logger (NUNCA console.log, NUNCA logar senhas)
+
+### Frontend
+- [ ] Sem `dangerouslySetInnerHTML` com dados do usuário
+- [ ] Token em cookie (não localStorage)
+- [ ] Validação Zod antes de submit
+- [ ] Roles check é UX only (backend valida)
+- [ ] Sem dados sensíveis em URL/query params

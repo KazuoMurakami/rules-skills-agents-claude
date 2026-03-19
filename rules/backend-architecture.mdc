@@ -1,0 +1,90 @@
+---
+description: Arquitetura do Backend REDD - AdonisJS v5, camadas, responsabilidades e segurança
+globs: redd-api/**/*.ts
+alwaysApply: false
+---
+
+# Arquitetura Backend — AdonisJS v5
+
+## Fluxo de Dados
+
+```
+Request → Routes → Middleware (auth/rateLimit) → Controller → Validator → Service → Repository → Model → PostgreSQL
+                                                                                                           ↑
+                                                                                              Filter (LucidFilter)
+```
+
+## Camadas e Responsabilidades
+
+| Camada         | Responsabilidade                        | Acessa            |
+| -------------- | --------------------------------------- | ----------------- |
+| **Routes**     | Define endpoints, middlewares, namespace | Controller        |
+| **Middleware**  | Auth, rate limit, decode body           | -                 |
+| **Controller** | Orquestra Request → Validate → Service/Repo → Response | Validator, Service, Repository |
+| **Validator**  | Valida e sanitiza inputs                | -                 |
+| **Service**    | Regras de negócio complexas, transactions | Repository(s)    |
+| **Repository** | Queries, CRUD, preloads                 | Model, Filter     |
+| **Model**      | Definição de entidade, hooks, relationships | Database        |
+| **Filter**     | Filtros dinâmicos via query string       | Model Query       |
+
+## Estrutura de Pastas
+
+```
+redd-api/app/
+├── Controllers/Http/{Domain}/   # Controllers agrupados por domínio
+├── Services/{Domain}/           # Regras de negócio
+├── Repositories/{Domain}/       # Acesso a dados
+├── Models/{Domain}/             # Entidades Lucid ORM
+├── Models/Filters/{Domain}/     # Filtros por entidade
+├── Validator/{Domain}/          # Validadores Adonis
+├── Middleware/                  # Auth, RateLimit, Is, ExternalAuth
+├── Exceptions/                  # HttpException, NotFoundException
+├── Enums/                       # 26 arquivos de enums por domínio
+├── Contracts/                   # RepositoryContract, ValidatorContract, IncludeContract
+└── utils/                       # dates.ts, numbers.ts
+```
+
+## Regras Arquiteturais
+
+1. **Controllers NUNCA acessam Model diretamente** — sempre via Repository
+2. **Services contêm lógica complexa** — múltiplos repos, transactions, integrações
+3. **Repositories são a única camada que acessa o banco** — queries, preloads, CRUD
+4. **Validators sanitizam TODA entrada** — trim strings, validar FK com `rules.exists()`
+5. **Soft delete obrigatório** — `deletedAt` em todas as entidades
+6. **Transactions obrigatórias** em operações multi-tabela
+
+## Autenticação e Autorização
+
+```typescript
+// Auth via JWT (API tokens)
+.middleware('auth')
+
+// Role checking manual no controller
+const user = auth.user!;
+const roles = user.roles.map(r => r.id);
+if (!roles.includes(RoleEnum.SUPER_ADMIN)) {
+  // Verificar ownership ou permissão específica
+}
+```
+
+- JWT com refresh token automático
+- Roles via tabela pivot `user_roles`
+- SUPER_ADMIN bypass em endpoints sensíveis
+- `externalAuth` middleware para webhooks/integrações
+
+## Cache (Redis)
+
+```typescript
+// Chave: REDD:{entity}:{id}
+await Redis.set('REDD:orders:list', JSON.stringify(data), 'EX', 3600);
+await Redis.del('REDD:orders:list'); // Invalidar em writes
+```
+
+## Segurança
+
+- Queries SEMPRE via Lucid ORM (previne SQL injection)
+- Validar TODOS os inputs no Validator (previne injection)
+- Usar `rules.exists()` para FK validation (previne IDOR)
+- Nunca expor dados sensíveis: `serializeAs: null` no Model
+- Rate limiting em endpoints críticos (login, webhooks)
+- Logging de acessos via `AccessLog`

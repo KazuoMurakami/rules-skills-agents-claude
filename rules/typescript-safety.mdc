@@ -1,0 +1,171 @@
+---
+description: TypeScript strict mode - Gotchas, noUncheckedIndexedAccess, type guards e padrões seguros
+globs: redd-client-v2/**/*.{ts,tsx}, redd-api/**/*.ts
+alwaysApply: false
+---
+
+# TypeScript Safety — Strict Mode Patterns
+
+## noUncheckedIndexedAccess (Frontend v2)
+
+Com `noUncheckedIndexedAccess: true`, acessar arrays/objetos por índice retorna `T | undefined`:
+
+```typescript
+// ✅ BOM: Guard com optional chaining
+const items: string[] = ['a', 'b', 'c']
+const first = items[0]  // string | undefined
+if (first) {
+  console.log(first.toUpperCase())  // OK: first é string
+}
+
+// ✅ BOM: Non-null assertion quando temos certeza (com cuidado)
+const orderBy = params.orderBy?.[0]?.split(',')
+const column = orderBy?.[0]
+const direction = orderBy?.[1] ?? 'asc'
+
+// ❌ RUIM: Acesso direto sem guard
+const first = items[0]
+console.log(first.toUpperCase())  // TypeError se undefined
+```
+
+## Override de Tipos em Interfaces
+
+```typescript
+// ✅ BOM: Omit + Intersection
+type VariationView = Omit<Variation, 'internalPrice'> & {
+  internalPrice: number  // era string na interface original
+}
+
+// ❌ RUIM: extends com tipo incompatível
+interface VariationView extends Variation {
+  internalPrice: number  // TS Error: incompatible override
+}
+```
+
+## Type Guards
+
+```typescript
+// ✅ Guard para User nullable
+const user: User | null = auth.user
+if (!user) {
+  throw new HttpException('Não autenticado', 401)
+}
+// Aqui user é User (narrowing automático)
+
+// ✅ Guard antes de is/isAny (user pode ser null)
+if (user && isAny(user, [RoleEnum.ADMIN, RoleEnum.SUPER_ADMIN])) {
+  // user é User & tem role
+}
+
+// ✅ Type narrowing com in
+function isOrder(item: Order | Purchase): item is Order {
+  return 'salesNumber' in item
+}
+```
+
+## Generics — Boas Práticas
+
+```typescript
+// ✅ BOM: Generic com constraint
+function getById<T extends { id: number }>(items: T[], id: number): T | undefined {
+  return items.find(item => item.id === id)
+}
+
+// ✅ BOM: Generic em hooks
+export function useFeatureQuery<T>(
+  key: readonly unknown[],
+  fn: () => Promise<T>,
+  options?: { enabled?: boolean }
+) {
+  return useQuery({
+    queryKey: key,
+    queryFn: fn,
+    ...options,
+  })
+}
+
+// ❌ RUIM: any como escape
+function getById(items: any[], id: number): any { ... }
+```
+
+## Enum Patterns
+
+```typescript
+// ✅ Enums numéricos para IDs do banco
+export enum OrderStatusEnum {
+  PEDIDO_EM_PREPARO = 1,
+  AGUARDANDO_APROVACAO = 2,
+  PEDIDO_PRONTO = 3,
+}
+
+// ✅ Usar enum como tipo
+interface OrderFilters {
+  status?: OrderStatusEnum[]
+}
+
+// ✅ Type-safe comparação
+if (order.statusId === OrderStatusEnum.PEDIDO_PRONTO) { ... }
+```
+
+## Null vs Undefined
+
+```typescript
+// Convenção do projeto:
+// - undefined: campo não enviado / não preenchido
+// - null: campo explicitamente vazio / sem valor
+// - Zod: .optional() para undefined, .nullable() para null, .nullish() para ambos
+
+// ✅ Em interfaces
+interface Order {
+  salesNumber?: string          // pode não vir da API
+  deliveryDate: string          // sempre presente
+  deletedAt?: string | null     // explicitamente null quando não deletado
+}
+
+// ✅ Em filtros
+interface OrderFilters {
+  search?: string               // undefined = sem filtro
+  sellerId?: number | number[]  // undefined = todos
+}
+```
+
+## Patterns Perigosos a Evitar
+
+```typescript
+// ❌ Type assertion sem necessidade
+const user = data as User  // Pode mascarar erros
+
+// ✅ Prefira type guards
+if (isUser(data)) { /* data é User */ }
+
+// ❌ Non-null assertion excessivo
+const name = user!.firstName!.toUpperCase()!
+
+// ✅ Optional chaining
+const name = user?.firstName?.toUpperCase() ?? ''
+
+// ❌ any para silenciar erros
+const items: any = fetchData()
+
+// ✅ unknown com narrowing
+const items: unknown = fetchData()
+if (Array.isArray(items)) { /* items é unknown[] */ }
+
+// ❌ Ignorar erros de tipo com @ts-ignore
+// @ts-ignore
+const x = incompatibleTypes
+
+// ✅ Corrigir o tipo ou usar @ts-expect-error com explicação
+// @ts-expect-error - MUI DataGrid styled type mismatch, cast required
+const StyledGrid = styled(DataGrid)(...) as typeof DataGrid
+```
+
+## Boas Práticas Gerais
+
+1. **NUNCA** usar `any` — usar `unknown` + type guard
+2. **SEMPRE** guardar indexed access com `?.` ou `if`
+3. **Omit + &** para override de campos em interfaces
+4. **Type guard** antes de `is()` / `isAny()` quando user pode ser null
+5. **`as const`** em arrays de constantes para literal types
+6. **Evitar** `!` (non-null assertion) — preferir guards
+7. **`@ts-expect-error`** com explicação > `@ts-ignore` silencioso

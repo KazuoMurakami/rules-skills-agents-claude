@@ -1,0 +1,259 @@
+---
+description: Padrões de DataGrid MUI X v7 - Columns, styling, paginação server-side e row classes
+globs: redd-client-v2/src/components/**/columns/**/*.{ts,tsx}, redd-client-v2/src/**/*DataGrid*.tsx
+alwaysApply: false
+---
+
+# Padrões de DataGrid — MUI X v7
+
+## StyledDataGrid
+
+```tsx
+'use client'
+
+import { styled } from '@mui/material/styles'  // MUI, NÃO @emotion/styled
+import { DataGrid } from '@mui/x-data-grid'
+
+// Cast necessário para manter tipagem
+const StyledDataGrid = styled(DataGrid)(({ theme }) => ({
+  border: 'none',
+  '& .MuiDataGrid-columnHeaders': {
+    backgroundColor: theme.palette.grey[100],
+  },
+  '& .MuiDataGrid-cell': {
+    borderBottom: `1px solid ${theme.palette.divider}`,
+  },
+  // Status row colors
+  '& .status-background-1': {
+    backgroundColor: '#a5c1b9',
+    '&:hover': { backgroundColor: '#95b1a9' },
+  },
+  '& .status-background-2': {
+    backgroundColor: '#f5d6a0',
+    '&:hover': { backgroundColor: '#e5c690' },
+  },
+  '& .column-has-occurrence': {
+    backgroundColor: '#7f3e98',
+    color: '#fff',
+    '&:hover': { backgroundColor: '#6f2e88' },
+  },
+})) as typeof DataGrid  // ← Cast obrigatório
+```
+
+## Hook de Colunas
+
+```tsx
+import { useMemo } from 'react'
+import { type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid'
+import Chip from '@mui/material/Chip'
+import IconButton from '@mui/material/IconButton'
+import EditIcon from '@mui/icons-material/Edit'
+import type { Order } from '../types/types'
+import type { User } from '@/types/entities/user'
+import { formatDate, formatCurrency } from '@/lib/utils/format'
+import { isAny } from '@/lib/auth/authorization'
+import { RoleEnum } from '@/enums/RoleEnum'
+
+interface UseOrderColumnsParams {
+  user?: User | null
+  onEdit: (order: Order) => void
+  onDelete?: (order: Order) => void
+}
+
+export function useOrderColumns({ user, onEdit, onDelete }: UseOrderColumnsParams): GridColDef<Order>[] {
+  return useMemo(() => {
+    const columns: GridColDef<Order>[] = [
+      {
+        field: 'id',
+        headerName: 'ID',
+        width: 80,
+        sortable: true,
+      },
+      {
+        field: 'customerName',
+        headerName: 'Cliente',
+        flex: 1,
+        minWidth: 150,
+      },
+      {
+        field: 'deliveryDate',
+        headerName: 'Entrega',
+        width: 120,
+        valueGetter: (value: string) => formatDate(value),  // ✅ v7: (value, row)
+      },
+      {
+        field: 'totalValue',
+        headerName: 'Valor',
+        width: 120,
+        valueGetter: (value: number) => formatCurrency(value),
+      },
+      {
+        field: 'status',
+        headerName: 'Status',
+        width: 130,
+        renderCell: (params: GridRenderCellParams<Order>) => (
+          <Chip
+            label={params.row.status?.name ?? '-'}
+            size="small"
+            sx={{ backgroundColor: params.row.status?.color }}
+          />
+        ),
+      },
+      {
+        field: 'seller',
+        headerName: 'Vendedor',
+        width: 150,
+        valueGetter: (_value: unknown, row: Order) =>  // ✅ v7: (value, row)
+          row.seller ? `${row.seller.firstName} ${row.seller.lastName}` : '-',
+      },
+      {
+        field: 'actions',
+        headerName: 'Ações',
+        width: 100,
+        sortable: false,
+        filterable: false,
+        renderCell: (params: GridRenderCellParams<Order>) => (
+          <IconButton onClick={() => onEdit(params.row)} size="small">
+            <EditIcon fontSize="small" />
+          </IconButton>
+        ),
+      },
+    ]
+
+    // Colunas condicionais baseadas em role
+    if (user && isAny(user, [RoleEnum.ADMIN, RoleEnum.SUPER_ADMIN]) && onDelete) {
+      columns.push({
+        field: 'delete',
+        headerName: '',
+        width: 60,
+        sortable: false,
+        renderCell: (params) => (
+          <IconButton onClick={() => onDelete(params.row)} size="small" color="error">
+            <DeleteIcon fontSize="small" />
+          </IconButton>
+        ),
+      })
+    }
+
+    return columns
+  }, [user, onEdit, onDelete])
+}
+```
+
+## DataGrid v7 — Gotchas
+
+```tsx
+// ✅ v7: valueGetter recebe (value, row)
+valueGetter: (value: string) => formatDate(value)
+valueGetter: (_value: unknown, row: Order) => row.seller?.fullName ?? '-'
+
+// ❌ v5/v6: params.row (NÃO funciona no v7)
+valueGetter: (params) => params.row.seller?.name
+
+// ✅ getRowClassName usa GridRowClassNameParams
+import { type GridRowClassNameParams } from '@mui/x-data-grid'
+getRowClassName: (params: GridRowClassNameParams<Order>) => {
+  if (params.row.hasOccurrence) return 'column-has-occurrence'
+  return `status-background-${params.row.statusId}`
+}
+
+// ❌ NÃO usar GridRowParams
+// import { type GridRowParams } from '@mui/x-data-grid'  // Tipo errado
+```
+
+## DataGrid com Server-Side Pagination
+
+```tsx
+'use client'
+
+import { useOrdersContext } from './hooks/use-orders-context'
+import { useOrderColumns } from './columns'
+import { StyledDataGrid } from './utils/styled'
+
+export function OrdersDataGrid() {
+  const {
+    orders,
+    total,
+    isLoading,
+    isFetching,
+    queryParams,
+    setQueryParams,
+    user,
+  } = useOrdersContext()
+
+  const handleEdit = useCallback((order: Order) => {
+    // abrir drawer/modal
+  }, [])
+
+  const columns = useOrderColumns({ user, onEdit: handleEdit })
+
+  return (
+    <StyledDataGrid
+      rows={orders}
+      columns={columns}
+      // Paginação server-side
+      paginationMode="server"
+      rowCount={total}
+      paginationModel={{
+        page: queryParams.page - 1,  // ⚠️ DataGrid é 0-indexed, backend é 1-indexed
+        pageSize: 25,
+      }}
+      onPaginationModelChange={(model) => {
+        setQueryParams({ page: model.page + 1 })  // ⚠️ +1 para backend
+      }}
+      pageSizeOptions={[25, 50, 100]}
+      // Loading
+      loading={isLoading || isFetching}
+      // Row styling
+      getRowClassName={(params) => `status-background-${params.row.statusId}`}
+      // Row ID (quando não é 'id')
+      getRowId={(row) => `${row.id}-${row.printTypeId ?? 0}`}
+      // Config
+      disableRowSelectionOnClick
+      autoHeight={false}
+      sx={{ flex: 1 }}
+    />
+  )
+}
+```
+
+## Paginação — Conversão de Índice
+
+```
+DataGrid page:  0, 1, 2, 3  (0-indexed)
+Backend page:   1, 2, 3, 4  (1-indexed)
+
+DataGrid → Backend:  model.page + 1
+Backend → DataGrid:  queryParams.page - 1
+```
+
+## Inline Editing
+
+```tsx
+// processRowUpdate para edição inline
+const processRowUpdate = useCallback(async (newRow: Order, oldRow: Order) => {
+  if (newRow.quantity !== oldRow.quantity) {
+    await updateMutation.mutateAsync({ id: newRow.id, quantity: newRow.quantity })
+  }
+  return newRow
+}, [updateMutation])
+
+<StyledDataGrid
+  processRowUpdate={processRowUpdate}
+  onProcessRowUpdateError={(error) => {
+    addToast({ type: 'error', description: 'Erro ao atualizar' })
+  }}
+/>
+```
+
+## Boas Práticas
+
+1. **`styled()` com cast** — `as typeof DataGrid` para manter tipagem
+2. **`useMemo`** no hook de colunas — evita recriação a cada render
+3. **`paginationMode="server"`** — SEMPRE (dados vêm do backend)
+4. **Conversão page ±1** — DataGrid 0-indexed, backend 1-indexed
+5. **`valueGetter(value, row)`** — formato v7 (NÃO params.row)
+6. **`GridRowClassNameParams`** — tipo correto para getRowClassName
+7. **Colunas condicionais** baseadas em role do usuário
+8. **Loading** — `isLoading || isFetching` para mostrar durante refetch
+9. **`getRowId`** — quando rows podem ter IDs duplicados (ex: por printType)

@@ -1,0 +1,82 @@
+---
+description: Checklist e regras para geração de código no projeto REDD (backend e frontend v2)
+alwaysApply: true
+---
+
+# Regras de Geração de Código
+
+## Antes de Gerar Código
+
+1. **Leia código existente** similar no projeto antes de criar novo
+2. **Verifique os padrões** nas rules e skills relevantes
+3. **Use agents especializados** quando apropriado:
+   - `redd-backend-generator` → backend (Model, Repository, Service, Controller, Routes)
+   - `redd-frontend-generator` → frontend v2 (Page, Provider, DataGrid, Hooks, API Resource)
+   - `postgresql-query-analyzer` → queries SQL e otimização
+   - `codigo-limpo-pt-br` → revisão de código limpo
+   - `redd-feature-analyzer` → entender feature existente
+
+## Backend (redd-api) — Criação de Entidade
+
+### Ordem de criação:
+1. **Migration** → `database/migrations/`
+2. **Model** → `app/Models/{Domain}/Entity.ts`
+3. **Filter** → `app/Models/Filters/{Domain}/EntityFilter.ts`
+4. **Repository** → `app/Repositories/{Domain}/EntityRepository.ts`
+5. **Validator** → `app/Validator/{Domain}/EntityValidator.ts`
+6. **Controller** → `app/Controllers/Http/{Domain}/EntityController.ts`
+7. **Routes** → `start/routes/{domain}.ts`
+8. **Service** (se lógica complexa) → `app/Services/{Domain}/EntityService.ts`
+
+### Checklist Backend:
+- [ ] Model estende `Model` base (inclui timestamps + soft delete)
+- [ ] Hooks `@beforeFind()` e `@beforeFetch()` filtram `deleted_at`
+- [ ] Filter estende `Filter` base com campos de busca
+- [ ] Repository estende `Repository<Entity>` base
+- [ ] Validator implementa `ValidatorContract` com mensagens PT-BR
+- [ ] Controller estende `Controller` base (CRUD herdado)
+- [ ] Rotas com `.middleware('auth')` e `.namespace()`
+- [ ] Transactions em operações multi-tabela
+
+## Frontend v2 (redd-client-v2) — Criação de Página
+
+### Ordem de criação:
+1. **Types** → `src/components/features/{feature}/types/types.ts`
+2. **API Resource** → `src/lib/api/resources/{feature}.ts`
+3. **Enum** (se necessário) → `src/enums/{Feature}Enum.ts`
+4. **Query Hooks** → `src/components/features/{feature}/hooks/use-{feature}.ts`
+5. **Context/Provider** → `src/components/features/{feature}/hooks/use-{feature}-context.tsx`
+6. **Includes** → `src/components/features/{feature}/hooks/includes.ts`
+7. **Columns** → `src/components/features/{feature}/columns/index.tsx`
+8. **Filters** → `src/components/features/{feature}/{Feature}Filters.tsx`
+9. **DataGrid** → `src/components/features/{feature}/{Feature}DataGrid.tsx`
+10. **Client** → `src/components/features/{feature}/{Feature}Client.tsx`
+11. **Page SSR** → `src/app/(dashboard)/{feature}/page.tsx`
+
+### Checklist Frontend v2:
+- [ ] Types em `features/{feature}/types/types.ts` (NÃO no API resource)
+- [ ] API Resource re-exporta types do feature
+- [ ] `'use client'` em todos componentes com hooks/state/events
+- [ ] Provider usa `nuqs` para URL state (filtros, paginação)
+- [ ] Query hooks com hierarchical keys: `featureKeys.list(filters)`
+- [ ] `useMemo` no context value do Provider
+- [ ] `placeholderData: (prev) => prev` nas queries (evita flash)
+- [ ] Page SSR com `Suspense` + `force-dynamic`
+- [ ] DataGrid com `paginationMode="server"` e `rowCount`
+- [ ] Imports MUI individuais: `import Box from '@mui/material/Box'`
+- [ ] Zod v4: `{ error: 'msg' }` (NÃO `{ required_error }`)
+- [ ] Toast com `useToast()` → `addToast({ type, description })`
+- [ ] Mensagens em PT-BR
+
+## Proibições ao Gerar Código
+
+- ❌ `any` no TypeScript
+- ❌ Mensagens de erro em inglês
+- ❌ Queries sem soft delete
+- ❌ Componentes com mais de 300 linhas
+- ❌ Imports barrel MUI: `import { Box, Button } from '@mui/material'`
+- ❌ React Query v3 syntax: `useQuery(['key'], fn, opts)`
+- ❌ Zod v3 syntax: `required_error`
+- ❌ `pages/` router (usar App Router `app/`)
+- ❌ Código duplicado — extrair para hooks/utils reutilizáveis
+- ❌ `console.log` em produção

@@ -1,0 +1,102 @@
+---
+description: Padrões de Rotas - Endpoints RESTful, middlewares, agrupamento e segurança
+globs: redd-api/start/routes/**/*.ts
+alwaysApply: false
+---
+
+# Padrões de Rotas
+
+## Estrutura de Arquivo de Rotas
+
+```typescript
+import Route from '@ioc:Adonis/Core/Route';
+
+Route.group(() => {
+  // CRUD padrão
+  Route.get('/', 'EntitiesController.index');
+  Route.post('/', 'EntitiesController.store');
+  Route.get('/:id', 'EntitiesController.show');
+  Route.put('/:id', 'EntitiesController.update');
+  Route.delete('/:id', 'EntitiesController.destroy');
+
+  // Ações customizadas (ANTES de /:id para evitar conflito)
+  Route.get('/exports', 'EntitiesController.getExport');
+  Route.get('/grouped', 'EntitiesController.grouped');
+
+  // Ações em recurso específico
+  Route.put('/:id/approve', 'EntitiesController.approve');
+  Route.put('/:id/status', 'EntitiesController.updateStatus');
+
+  // Sub-recursos
+  Route.get('/:entityId/notes', 'NotesController.index');
+  Route.post('/:entityId/notes', 'NotesController.store');
+})
+  .prefix('entities')
+  .middleware('auth')
+  .namespace('App/Controllers/Http/{Domain}');
+```
+
+## Convenções de URL
+
+| Padrão             | Formato                        | Exemplo                          |
+| ------------------ | ------------------------------ | -------------------------------- |
+| Listagem           | `GET /entities`                | `GET /orders`                    |
+| Criação            | `POST /entities`               | `POST /orders`                   |
+| Detalhe            | `GET /entities/:id`            | `GET /orders/1`                  |
+| Atualização        | `PUT /entities/:id`            | `PUT /orders/1`                  |
+| Deleção            | `DELETE /entities/:id`         | `DELETE /orders/1`               |
+| Ação customizada   | `PUT /entities/:id/action`     | `PUT /orders/1/approve`          |
+| Sub-recurso        | `GET /entities/:id/items`      | `GET /orders/1/notes`            |
+| Exportação         | `GET /entities/exports`        | `GET /orders/exports`            |
+| Listas (lookups)   | `GET /lists/{type}`            | `GET /lists/categories`          |
+
+> **IMPORTANTE**: Rotas sem parâmetro (`/exports`, `/grouped`) devem vir ANTES de `/:id` para evitar conflito de matching.
+
+## Middlewares
+
+| Middleware       | Uso                               |
+| ---------------- | --------------------------------- |
+| `auth`           | Rotas autenticadas (JWT)          |
+| `externalAuth`   | Webhooks e integrações externas   |
+| `decodeBody`     | Decodifica body especial          |
+| `rateLimit`      | Rate limiting em endpoints críticos |
+| `is:role`        | Verificação de role               |
+
+## Organização por Domínio
+
+```
+start/routes/
+├── auth.ts              # Login, logout, refresh, change-password
+├── users.ts             # CRUD de usuários
+├── orders.ts            # Pedidos
+├── purchases.ts         # Compras
+├── products.ts          # Produtos e variações
+├── productions.ts       # Produção (filas Kanban)
+├── budgets.ts           # Orçamentos CRM
+├── deliveries.ts        # Entregas
+├── lists.ts             # Lookups (categorias, cores, etc.)
+└── external/            # Webhooks e APIs externas
+    ├── budgets.ts
+    └── orders.ts
+```
+
+## Rotas Externas (Webhooks/Integrações)
+
+```typescript
+Route.group(() => {
+  Route.post('/', 'ExternalController.store').middleware('decodeBody');
+})
+  .prefix('external/entities')
+  .middleware('externalAuth')   // Auth diferente do JWT
+  .namespace('App/Controllers/Http/External');
+```
+
+## Boas Práticas
+
+1. **SEMPRE** usar `.middleware('auth')` em rotas protegidas
+2. **Agrupar** rotas relacionadas com `.prefix()` e `.namespace()`
+3. **Rotas estáticas ANTES de dinâmicas** — `/exports` antes de `/:id`
+4. **Um arquivo por domínio** — não misturar entidades no mesmo arquivo
+5. **Namespace** deve apontar para `App/Controllers/Http/{Domain}`
+6. **Rate limiting** em endpoints de autenticação e webhooks
+7. **Verbos HTTP corretos**: GET (ler), POST (criar), PUT (atualizar), DELETE (remover)

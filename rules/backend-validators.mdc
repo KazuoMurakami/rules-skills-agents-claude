@@ -1,0 +1,159 @@
+---
+description: Padrões de Validators - Validação de inputs, sanitização e segurança
+globs: redd-api/app/Validator/**/*.ts
+alwaysApply: false
+---
+
+# Padrões de Validators
+
+## Estrutura Base
+
+Validators estendem `Validator` e implementam `ValidatorContract`:
+
+```typescript
+import { schema, rules } from '@ioc:Adonis/Core/Validator';
+import { RequestContract } from '@ioc:Adonis/Core/Request';
+import Validator from '../Validator';
+import ValidatorContract from 'App/Contracts/ValidatorContract';
+
+export default class EntityValidator extends Validator implements ValidatorContract {
+
+  public async id(request: RequestContract) {
+    return super.validate(
+      schema.create({
+        id: schema.number([rules.unsigned(), rules.exists({ table: 'entities', column: 'id' })])
+      }),
+      request
+    );
+  }
+
+  public async index(request: RequestContract) {
+    return super.validate(schema.create({}), request);
+  }
+
+  public async create(request: RequestContract) {
+    const postSchema = schema.create({
+      name: schema.string({ trim: true }, [rules.maxLength(255)]),
+      statusId: schema.number([
+        rules.unsigned(),
+        rules.exists({ table: 'statuses', column: 'id' })
+      ]),
+      description: schema.string.optional({ trim: true }, [rules.maxLength(1000)]),
+    });
+
+    return super.validate(postSchema, request, this.messages());
+  }
+
+  public async update(request: RequestContract) {
+    const postSchema = schema.create({
+      name: schema.string.optional({ trim: true }, [rules.maxLength(255)]),
+      statusId: schema.number.optional([
+        rules.unsigned(),
+        rules.exists({ table: 'statuses', column: 'id' })
+      ]),
+    });
+
+    return super.validate(postSchema, request, this.messages());
+  }
+
+  private messages() {
+    return {
+      'name.required': 'Nome é obrigatório',
+      'name.maxLength': 'Nome deve ter no máximo 255 caracteres',
+      'statusId.required': 'Status é obrigatório',
+      'statusId.exists': 'Status não encontrado',
+    };
+  }
+}
+```
+
+## Métodos Obrigatórios (ValidatorContract)
+
+| Método   | Valida                          | Retorno         |
+| -------- | ------------------------------- | --------------- |
+| `id`     | `params.id` (exists no DB)      | `{ id: number }` |
+| `index`  | Query params de listagem        | Query params    |
+| `create` | Body completo (campos required) | Dados validados |
+| `update` | Body parcial (campos optional)  | Dados validados |
+
+## Rules Essenciais
+
+```typescript
+// ── Strings ──
+schema.string({ trim: true }, [rules.maxLength(255)])        // Required + trim + max
+schema.string.optional({ trim: true })                        // Optional
+schema.string.nullableAndOptional({ trim: true })             // Nullable + optional
+
+// ── Numbers ──
+schema.number([rules.unsigned()])                             // Positivo
+schema.number([rules.exists({ table: 'users', column: 'id' })]) // FK validation
+
+// ── Email (unique) ──
+schema.string({ trim: true }, [
+  rules.email(),
+  rules.unique({ table: 'users', column: 'email' })
+])
+
+// ── Email (unique no update, excluindo o próprio registro) ──
+schema.string.optional({ trim: true }, [
+  rules.email(),
+  rules.unique({
+    table: 'users',
+    column: 'email',
+    whereNot: { id: request.param('id') }
+  })
+])
+
+// ── Arrays ──
+schema.array().members(
+  schema.number([rules.exists({ table: 'items', column: 'id' })])
+)
+schema.array.optional().members(schema.number())
+
+// ── UUID ──
+schema.string({}, [rules.uuid()])
+
+// ── Password com confirmação ──
+schema.string({}, [
+  rules.minLength(6),
+  rules.maxLength(16),
+  rules.confirmed('passwordConfirmation')
+])
+
+// ── Enum ──
+schema.enum(Object.values(StatusEnum))
+
+// ── Date ──
+schema.date({ format: 'iso' })
+schema.date.optional({ format: 'yyyy-MM-dd' })
+```
+
+## Segurança na Validação
+
+```typescript
+// ✅ SEMPRE validar FK com rules.exists() — previne IDOR
+schema.number([rules.exists({ table: 'orders', column: 'id' })])
+
+// ✅ SEMPRE usar trim em strings — previne whitespace attacks
+schema.string({ trim: true }, [...])
+
+// ✅ SEMPRE limitar tamanho de strings — previne payload oversized
+schema.string({ trim: true }, [rules.maxLength(255)])
+
+// ✅ SEMPRE validar unique com whereNot no update
+rules.unique({ table: 'users', column: 'email', whereNot: { id: request.param('id') } })
+
+// ✅ SEMPRE validar arrays com members — previne dados malformados
+schema.array().members(schema.number([rules.unsigned()]))
+```
+
+## Boas Práticas
+
+1. **Campos obrigatórios** no `create`, **opcionais** no `update`
+2. **`trim: true`** em TODAS as strings
+3. **`maxLength`** em TODAS as strings (previne oversized payloads)
+4. **`rules.exists()`** em TODAS as foreign keys (previne IDOR)
+5. **`rules.unique()`** com `whereNot` no update (exclui registro atual)
+6. **Mensagens em PT-BR** para todos os erros de validação
+7. **Validar `params.id`** com `rules.exists()` (previne 404 no controller)
+8. **NUNCA** confiar em dados do client sem validar

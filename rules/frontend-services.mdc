@@ -1,0 +1,195 @@
+---
+description: Padrões de API Services - HttpClient base, Resources, server-side fetch e tipos
+globs: redd-client-v2/src/lib/api/**/*.ts, redd-client-v2/src/lib/api/**/*.tsx
+alwaysApply: false
+---
+
+# Padrões de API Services
+
+## Arquitetura de API
+
+```
+Client Components:
+  API Resource (extends HttpClient) → Axios instance → Backend
+
+Server Components (SSR):
+  serverApi (fetch wrapper) → Backend (com cookies)
+```
+
+## HttpClient Base
+
+```typescript
+// lib/api/http-client.ts
+class HttpClient<T> {
+  constructor(protected path: string) {}
+
+  async paginate(params?: RequestParams): Promise<Pagination<T>>
+  async getAll(params?: RequestParams): Promise<T[]>
+  async getById(id: number, params?: RequestParams): Promise<T>
+  async create(data: Partial<T>): Promise<T>
+  async update(id: number, data: Partial<T>): Promise<T>
+  async delete(id: number): Promise<void>
+}
+```
+
+## API Resource (por entidade)
+
+```typescript
+// lib/api/resources/orders.ts
+import { HttpClient } from '../http-client'
+import { api } from '../client'
+import type { Order, OrderFilters, CreateOrderData } from '@/components/features/orders/types/types'
+
+class OrdersResource extends HttpClient<Order> {
+  constructor() {
+    super('/orders')
+  }
+
+  // Métodos customizados
+  async approve(id: number, data: ApproveData): Promise<Order> {
+    const response = await api.put<Order>(`${this.path}/${id}/approve`, data)
+    return response.data
+  }
+
+  async export(filters: OrderFilters): Promise<Blob> {
+    const response = await api.get(`${this.path}/exports`, {
+      params: filters,
+      responseType: 'blob',
+    })
+    return response.data
+  }
+
+  async createNote(orderId: number, note: string): Promise<OrderNote> {
+    const response = await api.post(`${this.path}/${orderId}/notes`, { note })
+    return response.data
+  }
+}
+
+// Singleton export
+export const ordersResource = new OrdersResource()
+
+// Re-export types do feature
+export type { Order, OrderFilters, CreateOrderData } from '@/components/features/orders/types/types'
+```
+
+## Server-Side Fetch (SSR)
+
+```typescript
+// lib/api/server.ts
+import { cookies } from 'next/headers'
+
+const serverApi = {
+  get: <T>(endpoint: string, params?: object) => serverFetch<T>(endpoint, { method: 'GET', params }),
+  post: <T>(endpoint: string, data?: unknown) => serverFetch<T>(endpoint, { method: 'POST', body: data }),
+}
+
+// Uso em Server Components (pages):
+async function OrdersContent() {
+  const orders = await serverApi.get<Pagination<Order>>('/orders', {
+    page: 1,
+    perPage: 25,
+    includes: orderIncludes,
+  })
+  return <OrdersClient orders={orders} />
+}
+```
+
+- `serverApi` usa `fetch()` nativo com Next.js caching
+- Lê token do cookie `redd.token` automaticamente
+- Default: `revalidate: 60` (ISR 60s)
+
+## Axios Client (Client-Side)
+
+```typescript
+// lib/api/client.ts
+// - Interceptor adiciona Bearer token automaticamente
+// - 401 auto-refresh: tenta refresh token antes de redirecionar para login
+// - Base URL: NEXT_PUBLIC_API_URL
+```
+
+## Tipos Globais
+
+```typescript
+// types/api.ts
+export interface Pagination<T> {
+  currentPage: number
+  firstPage: number
+  lastPage: number
+  perPage: number
+  total: number      // ← .total (NÃO .meta.total)
+  data: T[]
+}
+
+export interface IncludeContract {
+  include: string           // nome da relação
+  fields?: string[]         // colunas específicas (SELECT)
+  orderBy?: string[]        // ex: ['name,asc']
+  children?: IncludeContract[]  // relações aninhadas
+}
+
+export interface RequestParams {
+  page?: number
+  perPage?: number
+  includes?: IncludeContract[]
+  filters?: object
+  orderBy?: string[]        // ex: ['id,desc']
+  withCount?: string[]
+  listType?: 'list' | 'pagination'
+}
+```
+
+## Padrão de Types (Feature-Level)
+
+```typescript
+// components/features/orders/types/types.ts
+export interface Order {
+  id: number
+  creatorId: number
+  companyId: number
+  statusId: number
+  sellerId: number
+  salesNumber?: string
+  customerName: string
+  deliveryDate: string
+  createdAt: string
+  updatedAt: string
+  deletedAt?: string
+
+  // Relationships (opcionais — dependem do include)
+  creator?: { id: number; firstName: string; lastName: string; fullName: string }
+  company?: { id: number; name: string }
+  seller?: { id: number; firstName: string; lastName: string; fullName: string }
+  status?: { id: number; name: string; color: string }
+  notes?: OrderNote[]
+  purchases?: Purchase[]
+}
+
+export interface OrderFilters {
+  search?: string
+  status?: number[] | string[]
+  sellerId?: number | number[]
+  companyId?: number | number[]
+  deliveryDate?: string
+}
+```
+
+## Regras de Organização
+
+| O quê                    | Onde                                        |
+| ------------------------ | ------------------------------------------- |
+| **Types/Interfaces**     | `features/{feature}/types/types.ts`         |
+| **API Resource class**   | `lib/api/resources/{feature}.ts`            |
+| **Resource re-exports**  | Types do feature re-exportados              |
+| **Global types**         | `types/api.ts` (Pagination, RequestParams)  |
+| **User type**            | `types/entities/user.ts`                    |
+
+## Boas Práticas
+
+1. **Um Resource por entidade** — extends HttpClient<T>
+2. **Singleton**: `export const entityResource = new EntityResource()`
+3. **Types na feature**, re-export no Resource
+4. **`includes` com `fields`** — SEMPRE selecionar colunas necessárias
+5. **`listType: 'list'`** para lookups (sem paginação)
+6. **`orderBy: ['id,desc']`** — formato string array
+7. **Pagination**: acessar `.total` diretamente (NÃO `.meta.total`)
+8. **Server fetch** para SSR (pages), **Axios** para client components

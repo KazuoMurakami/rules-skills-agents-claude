@@ -1,0 +1,189 @@
+---
+description: Padrões de Componentes React 19 + MUI 6 - Estrutura, tipagem, memoização e styling
+globs: redd-client-v2/src/components/**/*.tsx
+alwaysApply: false
+---
+
+# Padrões de Componentes — React 19 + MUI 6
+
+## Estrutura de Componente
+
+```tsx
+'use client'
+
+import { useState, useCallback, useMemo } from 'react'
+import Box from '@mui/material/Box'
+import Typography from '@mui/material/Typography'
+import Button from '@mui/material/Button'
+
+interface EntityCardProps {
+  entity: Entity
+  onEdit: (id: number) => void
+  onDelete: (id: number) => void
+}
+
+export function EntityCard({ entity, onEdit, onDelete }: EntityCardProps) {
+  const [isLoading, setIsLoading] = useState(false)
+
+  const handleEdit = useCallback(() => {
+    onEdit(entity.id)
+  }, [onEdit, entity.id])
+
+  return (
+    <Box sx={{ p: 2, display: 'flex', gap: 1 }}>
+      <Typography variant="h6">{entity.name}</Typography>
+      <Button onClick={handleEdit} disabled={isLoading}>
+        Editar
+      </Button>
+    </Box>
+  )
+}
+```
+
+## Convenções
+
+| Aspecto      | Regra                                          |
+| ------------ | ---------------------------------------------- |
+| Nomes        | PascalCase: `EntityCard.tsx`                   |
+| Export       | Named export (NÃO default)                     |
+| Props        | Interface com sufixo `Props`                   |
+| `'use client'` | Obrigatório se usa hooks/state/events        |
+| Arquivo max  | 200-300 linhas — extrair para sub-componentes  |
+
+## Client Component (Orquestrador)
+
+```tsx
+'use client'
+
+interface OrdersClientProps {
+  user: User
+  sellers: Seller[]
+  companies: Company[]
+  statusList: Status[]
+}
+
+export function OrdersClient({ user, sellers, companies, statusList }: OrdersClientProps) {
+  return (
+    <OrdersProvider user={user} sellers={sellers} companies={companies} statusList={statusList}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <OrderFilters />
+        <OrdersDataGrid />
+      </Box>
+    </OrdersProvider>
+  )
+}
+```
+
+## MUI 6 — Imports e Styling
+
+```tsx
+// ✅ BOM: Imports individuais (tree-shaking)
+import Box from '@mui/material/Box'
+import Button from '@mui/material/Button'
+import Typography from '@mui/material/Typography'
+import TextField from '@mui/material/TextField'
+import IconButton from '@mui/material/IconButton'
+import Chip from '@mui/material/Chip'
+
+// ✅ BOM: Icons individuais
+import EditIcon from '@mui/icons-material/Edit'
+import DeleteIcon from '@mui/icons-material/Delete'
+
+// ❌ RUIM: Imports barrel (bundle bloat)
+import { Box, Button, Typography } from '@mui/material'
+import { Edit, Delete } from '@mui/icons-material'
+```
+
+```tsx
+// ✅ BOM: Styling com sx prop
+<Box sx={{ p: 2, mb: 1, display: 'flex', gap: 2, alignItems: 'center' }}>
+  <Typography variant="body1" sx={{ fontWeight: 600 }}>
+    Texto
+  </Typography>
+</Box>
+
+// ✅ BOM: Styled components para reutilização
+import { styled } from '@mui/material/styles'
+const StyledCard = styled(Box)(({ theme }) => ({
+  padding: theme.spacing(2),
+  borderRadius: theme.shape.borderRadius,
+  border: `1px solid ${theme.palette.divider}`,
+}))
+```
+
+## Grid2 (MUI 6)
+
+```tsx
+// ✅ Correto no MUI 6
+import Grid from '@mui/material/Grid2'
+
+<Grid container spacing={2}>
+  <Grid size={{ xs: 12, md: 6 }}>  {/* size prop, NÃO xs/md */}
+    <TextField />
+  </Grid>
+</Grid>
+```
+
+## Memoização
+
+```tsx
+// React.memo para componentes que recebem props estáveis
+export const KanbanItem = memo(function KanbanItem({ item, onAction }: KanbanItemProps) {
+  return <Card>...</Card>
+})
+
+// useMemo para computações custosas
+const filteredItems = useMemo(() =>
+  items.filter(item => item.status === activeStatus),
+  [items, activeStatus]
+)
+
+// useCallback para callbacks passados como props
+const handleDelete = useCallback((id: number) => {
+  deleteMutation.mutate(id)
+}, [deleteMutation])
+```
+
+## Padrão de Dialog/Modal
+
+```tsx
+interface RemoveDialogProps {
+  open: boolean
+  onClose: () => void
+  onConfirm: () => void
+  entityName: string
+  isLoading: boolean
+}
+
+export function RemoveDialog({ open, onClose, onConfirm, entityName, isLoading }: RemoveDialogProps) {
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Confirmar exclusão</DialogTitle>
+      <DialogContent>
+        <Typography>
+          Deseja realmente excluir <strong>{entityName}</strong>?
+        </Typography>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={isLoading}>Cancelar</Button>
+        <Button onClick={onConfirm} color="error" variant="contained" disabled={isLoading}>
+          {isLoading ? 'Excluindo...' : 'Excluir'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+```
+
+## Boas Práticas
+
+1. **Componentes funcionais** apenas — NUNCA classes
+2. **Named exports** — NUNCA `export default`
+3. **Props tipadas** com interface + sufixo `Props`
+4. **`'use client'`** em componentes com hooks/state/events
+5. **Máximo 200-300 linhas** — extrair lógica para hooks, sub-componentes
+6. **Composição** > herança — componentes pequenos compostos
+7. **Imports MUI individuais** — NUNCA barrel imports
+8. **`sx` prop** para estilos inline, `styled()` para reutilização
+9. **Early return** para condicionais (loading, error, empty states)
+10. **Mensagens em PT-BR** (labels, placeholders, botões, erros)

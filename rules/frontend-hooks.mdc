@@ -1,0 +1,294 @@
+---
+description: Padrões de Hooks - TanStack Query v5, nuqs URL state, Context Providers e memoização
+globs: redd-client-v2/src/**/hooks/**/*.{ts,tsx}, redd-client-v2/src/hooks/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Padrões de Hooks — TanStack Query v5 + nuqs 2 + Context
+
+## 1. Query Hooks (TanStack Query v5)
+
+### Query Keys Hierárquicas
+
+```typescript
+// hooks/use-orders.ts
+export const orderKeys = {
+  all: ['orders'] as const,
+  lists: () => [...orderKeys.all, 'list'] as const,
+  list: (filters: Record<string, unknown>) => [...orderKeys.lists(), filters] as const,
+  details: () => [...orderKeys.all, 'detail'] as const,
+  detail: (id: number) => [...orderKeys.details(), id] as const,
+}
+```
+
+### useQuery (TanStack Query v5)
+
+```typescript
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+
+export function useOrders(params: {
+  page: number
+  perPage: number
+  filters: OrderFilters
+  orderBy?: string[]
+  enabled?: boolean
+}) {
+  return useQuery({
+    queryKey: orderKeys.list({ ...params.filters, page: params.page, perPage: params.perPage }),
+    queryFn: () => ordersResource.paginate({
+      page: params.page,
+      perPage: params.perPage,
+      filters: params.filters,
+      orderBy: params.orderBy,
+      includes: orderIncludes,
+    }),
+    enabled: params.enabled,
+    staleTime: 5 * 60 * 1000,        // 5 min antes de refetch
+    refetchOnWindowFocus: false,       // Não refetch ao focar aba
+    placeholderData: (prev) => prev,   // Mantém dados anteriores (evita flash)
+  })
+}
+```
+
+### useMutation (TanStack Query v5)
+
+```typescript
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useToast } from '@/hooks/use-toast'
+
+export function useCreateOrder() {
+  const queryClient = useQueryClient()
+  const { addToast } = useToast()
+
+  return useMutation({
+    mutationFn: (data: CreateOrderData) => ordersResource.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: orderKeys.lists() })
+      addToast({ type: 'success', description: 'Pedido criado com sucesso' })
+    },
+    onError: () => {
+      addToast({ type: 'error', description: 'Erro ao criar pedido' })
+    },
+  })
+}
+
+export function useDeleteOrder() {
+  const queryClient = useQueryClient()
+  const { addToast } = useToast()
+
+  return useMutation({
+    mutationFn: (id: number) => ordersResource.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: orderKeys.lists() })
+      addToast({ type: 'success', description: 'Pedido excluído com sucesso' })
+    },
+    onError: () => {
+      addToast({ type: 'error', description: 'Erro ao excluir pedido' })
+    },
+  })
+}
+```
+
+### Diferenças v5 vs v3 (IMPORTANTE)
+
+```typescript
+// ✅ TanStack Query v5:
+useQuery({ queryKey: [...], queryFn: () => ..., ... })
+useMutation({ mutationFn: (data) => ..., onSuccess: () => ... })
+queryClient.invalidateQueries({ queryKey: [...] })
+
+// ❌ React Query v3 (NÃO usar):
+useQuery(['key'], () => ..., { ... })
+useMutation((data) => ..., { onSuccess: () => ... })
+queryClient.invalidateQueries(['key'])
+```
+
+## 2. Context Provider (nuqs + TanStack Query)
+
+```tsx
+// hooks/use-orders-context.tsx
+'use client'
+
+import { createContext, useContext, useMemo, type ReactNode } from 'react'
+import { useQueryStates, parseAsInteger, parseAsString, parseAsArrayOf } from 'nuqs'
+import { useDebouncedValue } from '@/hooks/use-debounce'
+import { useOrders } from './use-orders'
+import { isOnly, isAny } from '@/lib/auth/authorization'
+import type { User } from '@/types/entities/user'
+import { RoleEnum } from '@/enums/RoleEnum'
+
+interface OrdersContextData {
+  orders: Order[]
+  total: number
+  isLoading: boolean
+  isFetching: boolean
+  queryParams: QueryParams
+  setQueryParams: SetQueryParams
+  // ... outros dados
+}
+
+const OrdersContext = createContext<OrdersContextData | null>(null)
+
+interface OrdersProviderProps {
+  children: ReactNode
+  user: User
+  sellers: Seller[]
+  companies: Company[]
+  statusList: Status[]
+}
+
+export function OrdersProvider({ children, user, sellers, companies, statusList }: OrdersProviderProps) {
+  // URL state via nuqs
+  const [queryParams, setQueryParams] = useQueryStates({
+    page: parseAsInteger.withDefault(1),
+    search: parseAsString.withDefault(''),
+    status: parseAsArrayOf(parseAsInteger).withDefault([1, 2, 3]),
+    companyId: parseAsArrayOf(parseAsInteger).withDefault([]),
+    sellerId: parseAsArrayOf(parseAsInteger).withDefault([]),
+  }, { history: 'push', shallow: true })
+
+  // Debounce do search
+  const debouncedSearch = useDebouncedValue(queryParams.search, 500)
+
+  // Montar filtros com role-based defaults
+  const filters = useMemo<OrderFilters>(() => {
+    const base: OrderFilters = {
+      search: debouncedSearch || undefined,
+      status: queryParams.status?.length ? queryParams.status : undefined,
+      companyId: queryParams.companyId?.length ? queryParams.companyId : undefined,
+    }
+
+    // Vendedor só vê os próprios pedidos
+    if (isOnly(user, [RoleEnum.VENDAS])) {
+      base.sellerId = [user.id]
+    } else if (queryParams.sellerId?.length) {
+      base.sellerId = queryParams.sellerId
+    }
+
+    return base
+  }, [debouncedSearch, queryParams, user])
+
+  // Query com TanStack Query v5
+  const { data, isLoading, isFetching } = useOrders({
+    page: queryParams.page,
+    perPage: 25,
+    filters,
+    orderBy: ['id,desc'],
+  })
+
+  // Memoizar context value (OBRIGATÓRIO para performance)
+  const value = useMemo<OrdersContextData>(() => ({
+    orders: data?.data ?? [],
+    total: data?.total ?? 0,
+    isLoading,
+    isFetching,
+    queryParams,
+    setQueryParams,
+    user,
+    sellers,
+    companies,
+    statusList,
+  }), [data, isLoading, isFetching, queryParams, setQueryParams, user, sellers, companies, statusList])
+
+  return (
+    <OrdersContext.Provider value={value}>
+      {children}
+    </OrdersContext.Provider>
+  )
+}
+
+export function useOrdersContext() {
+  const context = useContext(OrdersContext)
+  if (!context) {
+    throw new Error('useOrdersContext must be used within OrdersProvider')
+  }
+  return context
+}
+```
+
+## 3. Includes Pattern
+
+```typescript
+// hooks/includes.ts
+import type { IncludeContract } from '@/types/api'
+
+export const orderIncludes: IncludeContract[] = [
+  {
+    include: 'seller',
+    fields: ['id', 'firstName', 'lastName'],  // SEMPRE selecionar campos
+  },
+  {
+    include: 'company',
+    fields: ['id', 'name'],
+  },
+  {
+    include: 'status',
+    fields: ['id', 'name', 'color'],
+  },
+  {
+    include: 'purchases',
+    children: [
+      { include: 'supplier', fields: ['id', 'name'] }
+    ],
+  },
+]
+```
+
+> **IMPORTANTE**: Quando usar `children`, o FK (ex: `supplierId`) DEVE estar em `fields` do parent.
+
+## 4. Toast Pattern
+
+```typescript
+import { useToast } from '@/hooks/use-toast'
+
+const { addToast } = useToast()
+
+// Sucesso
+addToast({ type: 'success', description: 'Salvo com sucesso' })
+// Erro
+addToast({ type: 'error', description: 'Erro ao salvar' })
+```
+
+## 5. Debounce
+
+```typescript
+import { useDebouncedValue, useDebounce } from '@/hooks/use-debounce'
+
+// Debounce de valor (para search inputs)
+const debouncedSearch = useDebouncedValue(search, 500)
+
+// Debounce de função (para callbacks)
+const debouncedFn = useDebounce(handleSearch, 300)
+```
+
+## 6. Authorization
+
+```typescript
+import { is, isAny, isOnly, isAll } from '@/lib/auth/authorization'
+import { RoleEnum } from '@/enums/RoleEnum'
+
+// Verificar role (user pode ser null)
+if (user && isAny(user, [RoleEnum.ADMIN, RoleEnum.SUPER_ADMIN])) { ... }
+if (user && isOnly(user, [RoleEnum.VENDAS])) { ... }
+
+// ⚠️ user pode ser null — SEMPRE guardar com && antes de is()
+```
+
+## Convenções de Nomenclatura
+
+| Tipo               | Nome                          | Arquivo                          |
+| ------------------ | ----------------------------- | -------------------------------- |
+| Query hooks        | `use{Feature}s`, `useCreate{Feature}` | `use-{feature}.ts`      |
+| Query keys         | `{feature}Keys`               | `use-{feature}.ts`               |
+| Context Provider   | `{Feature}Provider`           | `use-{feature}-context.tsx`      |
+| Context hook       | `use{Feature}Context`         | `use-{feature}-context.tsx`      |
+| Includes           | `{feature}Includes`           | `includes.ts`                    |
+
+## Performance Rules
+
+1. **`useMemo`** no context value — OBRIGATÓRIO (previne re-renders em cascata)
+2. **`useCallback`** em funções passadas como props para componentes memoizados
+3. **`placeholderData: (prev) => prev`** em queries — evita flash de loading
+4. **`staleTime: 5 * 60 * 1000`** — reduz requests desnecessários
+5. **`refetchOnWindowFocus: false`** — padrão do projeto
+6. **Debounce** em inputs de busca — `useDebouncedValue(value, 500)`

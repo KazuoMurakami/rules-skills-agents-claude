@@ -1,0 +1,215 @@
+---
+description: Padrões de Formulários - React Hook Form 7 + Zod v4 + MUI 6
+globs: redd-client-v2/src/**/{schema,validations}*.ts, redd-client-v2/src/**/*Form*.tsx, redd-client-v2/src/**/*Modal*.tsx
+alwaysApply: false
+---
+
+# Padrões de Formulários — RHF 7 + Zod v4
+
+## Schema de Validação (Zod v4)
+
+```typescript
+// schema.ts
+import { z } from 'zod'
+
+export const entitySchema = z.object({
+  // ✅ Zod v4: { error: 'msg' } (NÃO { required_error })
+  name: z.string().min(1, 'Nome é obrigatório').max(255, 'Máximo 255 caracteres'),
+  email: z.string().email('Email inválido'),
+  statusId: z.number({ error: 'Status é obrigatório' }),
+  description: z.string().max(1000).optional(),
+  quantity: z.number().min(1, 'Quantidade mínima é 1').optional(),
+  deliveryDate: z.string().min(1, 'Data de entrega é obrigatória'),
+  items: z.array(z.object({
+    productId: z.number().min(1, 'Produto é obrigatório'),
+    quantity: z.number().min(1, 'Quantidade mínima: 1'),
+  })).min(1, 'Adicione pelo menos um item'),
+})
+
+export type EntityFormData = z.infer<typeof entitySchema>
+```
+
+### Gotchas do Zod v4
+
+```typescript
+// ✅ Zod v4: Nova sintaxe de erro
+z.number({ error: 'Campo obrigatório' })
+z.string({ error: 'Campo obrigatório' })
+
+// ❌ Zod v3 (NÃO usar):
+z.number({ required_error: 'Campo obrigatório' })
+
+// ⚠️ NUNCA usar .optional().default() com RHF — causa mismatch input/output
+// ✅ Correto: .optional() + defaultValues no useForm
+z.string().optional()
+// ❌ Errado:
+z.string().optional().default('')
+
+// ✅ Guardar acesso a campos opcionais
+if (data.subcategoryIds?.length) { ... }
+```
+
+## Componente de Formulário
+
+```tsx
+'use client'
+
+import { useForm, Controller } from 'react-hook-form'
+import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
+import TextField from '@mui/material/TextField'
+import Button from '@mui/material/Button'
+import MenuItem from '@mui/material/MenuItem'
+import Grid from '@mui/material/Grid2'
+import { entitySchema, type EntityFormData } from './schema'
+
+interface EntityFormProps {
+  onSubmit: (data: EntityFormData) => void
+  isLoading: boolean
+  defaultValues?: Partial<EntityFormData>
+}
+
+export function EntityForm({ onSubmit, isLoading, defaultValues }: EntityFormProps) {
+  const {
+    control,
+    handleSubmit,
+    formState: { errors },
+    reset
+  } = useForm<EntityFormData>({
+    resolver: standardSchemaResolver(entitySchema),
+    defaultValues: {
+      name: '',
+      email: '',
+      statusId: undefined,
+      description: '',
+      ...defaultValues,
+    },
+  })
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)}>
+      <Grid container spacing={2}>
+        <Grid size={{ xs: 12, md: 6 }}>
+          <Controller
+            name="name"
+            control={control}
+            render={({ field }) => (
+              <TextField
+                {...field}
+                label="Nome"
+                error={!!errors.name}
+                helperText={errors.name?.message}
+                fullWidth
+                required
+              />
+            )}
+          />
+        </Grid>
+
+        <Grid size={{ xs: 12, md: 6 }}>
+          <Controller
+            name="deliveryDate"
+            control={control}
+            render={({ field }) => (
+              <DateField
+                value={field.value}
+                onChange={field.onChange}
+                label="Data de Entrega"
+                error={!!errors.deliveryDate}
+                helperText={errors.deliveryDate?.message}
+              />
+            )}
+          />
+        </Grid>
+
+        <Grid size={{ xs: 12, md: 6 }}>
+          <Controller
+            name="statusId"
+            control={control}
+            render={({ field }) => (
+              <TextField
+                {...field}
+                select
+                label="Status"
+                error={!!errors.statusId}
+                helperText={errors.statusId?.message}
+                fullWidth
+              >
+                {statuses.map(s => (
+                  <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>
+                ))}
+              </TextField>
+            )}
+          />
+        </Grid>
+      </Grid>
+
+      <Button type="submit" variant="contained" disabled={isLoading} sx={{ mt: 2 }}>
+        {isLoading ? 'Salvando...' : 'Salvar'}
+      </Button>
+    </form>
+  )
+}
+```
+
+## DateField — ISO Strings
+
+O componente `DateField` trabalha com **ISO strings** (`yyyy-MM-dd`), NÃO Date objects:
+
+```tsx
+<Controller
+  name="deliveryDate"
+  control={control}
+  render={({ field }) => (
+    <DateField
+      value={field.value}       // string: '2024-03-15'
+      onChange={field.onChange}  // recebe string: '2024-03-15'
+      label="Data"
+      error={!!errors.deliveryDate}
+      helperText={errors.deliveryDate?.message}
+    />
+  )}
+/>
+```
+
+## Validações Comuns (Zod v4)
+
+```typescript
+// ── Strings ──
+z.string().min(1, 'Campo obrigatório')
+z.string().email('Email inválido')
+z.string().max(255, 'Máximo 255 caracteres')
+z.string().optional()
+z.string().nullable()
+
+// ── Numbers ──
+z.number({ error: 'Campo obrigatório' })
+z.number().min(1, 'Valor mínimo é 1')
+z.number().positive('Deve ser positivo')
+z.number().optional().nullable()
+
+// ── Arrays ──
+z.array(z.object({...})).min(1, 'Mínimo 1 item')
+z.array(z.number()).optional()
+
+// ── Conditional ──
+z.string().optional().refine(
+  (val) => !val || val.length >= 3,
+  'Mínimo 3 caracteres'
+)
+
+// ── Transform (cuidado com RHF) ──
+z.string().transform((val) => val.trim().toLowerCase())
+```
+
+## Boas Práticas
+
+1. **Schema em arquivo separado** (`schema.ts` na pasta do modal/form)
+2. **Mensagens de erro em PT-BR**
+3. **`Controller`** para todos componentes MUI (controle de value/onChange)
+4. **`defaultValues`** para TODOS os campos no `useForm`
+5. **`standardSchemaResolver`** para Zod v4 (NÃO `zodResolver` antigo)
+6. **NUNCA** `.optional().default()` com RHF
+7. **Guardar** acesso a campos opcionais com `?.`
+8. **Loading state** no botão de submit
+9. **`reset()`** após submit com sucesso
+10. **Grid2** com `size` prop para layout responsivo

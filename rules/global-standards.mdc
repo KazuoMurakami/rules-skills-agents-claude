@@ -1,0 +1,71 @@
+---
+description: Padrões globais do projeto REDD - Nomenclatura, TypeScript, qualidade e convenções obrigatórias
+alwaysApply: true
+---
+
+# Padrões Globais do Projeto REDD
+
+## Nomenclatura
+
+### Arquivos e Pastas
+- **PascalCase** para classes e componentes: `UserRepository.ts`, `OrdersDataGrid.tsx`
+- **camelCase** para hooks e utilitários: `use-orders.ts`, `format.ts`
+- **kebab-case** para pastas de rotas (backend): `order-deliveries.ts`
+- **kebab-case** para pastas de features (frontend): `physical-samples/`
+
+### Código
+- Variáveis e funções: `camelCase`
+- Classes, Interfaces e Types: `PascalCase`
+- Constantes globais: `UPPER_SNAKE_CASE`
+- Enums: `PascalCase` com valores `UPPER_SNAKE_CASE`
+- Banco de dados: `snake_case` (colunas, tabelas)
+
+## TypeScript — Regras Obrigatórias
+
+- **`strict: true`** — Sem exceções
+- **`noUncheckedIndexedAccess: true`** (frontend v2) — `obj[key]` retorna `T | undefined`, sempre guardar
+- Proibido `any` — usar `unknown` quando necessário
+- Sempre tipar parâmetros e retornos de funções públicas
+- Usar Generics para reutilização de tipos
+- Preferir `interface` para objetos extensíveis, `type` para unions/intersections
+- Override de campos: usar `Omit<T, 'field'> & { field: NewType }` — NUNCA `extends` quando muda tipo
+
+## Mensagens e Idioma
+
+- **Código** (variáveis, funções, classes): Inglês
+- **Mensagens ao usuário** (erros, toasts, labels, placeholders): Português BR
+- Exemplo: `throw new HttpException('Usuário não encontrado', 404)`
+- Toast: `addToast({ type: 'success', description: 'Salvo com sucesso' })`
+
+## Qualidade de Código
+
+- ESLint + Prettier configurados
+- Linhas ≤ 100 caracteres
+- **Backend**: Com ponto-e-vírgula, aspas simples
+- **Frontend v2**: Sem ponto-e-vírgula, aspas simples
+- Máximo 200-300 linhas por arquivo — extrair para subcomponentes/hooks
+- Funções puras quando possível
+- Early return para reduzir aninhamento
+
+## Commits
+
+Conventional Commits:
+- `feat:` Nova funcionalidade
+- `fix:` Correção de bug
+- `refactor:` Refatoração sem mudança de comportamento
+- `perf:` Melhoria de performance
+- `docs:` Documentação
+- `style:` Formatação/estilo
+- `chore:` Tarefas gerais
+
+## Proibições Globais
+
+- ❌ `any` no TypeScript
+- ❌ `console.log` em código de produção (usar Logger no backend)
+- ❌ Mensagens de erro em inglês para o usuário
+- ❌ Hard delete (sempre soft delete via `deletedAt`)
+- ❌ Queries sem filtro de `deleted_at`
+- ❌ Componentes com mais de 300 linhas
+- ❌ Imports barrel do MUI (`import { Box, Button } from '@mui/material'`)
+- ❌ `.optional().default()` com React Hook Form (causa mismatch input/output)
+- ❌ `params.row` no DataGrid v7 (usar `(value, row)` no valueGetter)

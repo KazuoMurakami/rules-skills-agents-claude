@@ -1,0 +1,103 @@
+---
+description: Contexto completo do projeto REDD - Stack tecnológico, entidades e roles
+alwaysApply: true
+---
+
+# Contexto do Projeto REDD
+
+## O que é o REDD?
+
+ERP para empresa de brindes promocionais. Gerencia pedidos, produção, orçamentos (CRM Kanban), entregas, estoque e usuários com RBAC.
+
+## Monorepo
+
+```
+redd-admin/
+├── redd-api/          # Backend - AdonisJS v5 + TypeScript
+├── redd-client/       # Frontend LEGADO (referência apenas)
+├── redd-client-v2/    # Frontend ATUAL - Next.js 16 + React 19 + MUI 6
+└── docs/              # Documentação técnica e features
+```
+
+> **IMPORTANTE**: Todo código frontend novo vai em `redd-client-v2/`. O `redd-client/` é apenas referência.
+
+## Stack Tecnológico
+
+### Backend (redd-api)
+
+| Tecnologia    | Versão  | Uso                |
+| ------------- | ------- | ------------------ |
+| AdonisJS      | v5.9    | Framework Node.js  |
+| TypeScript    | 5.x     | Linguagem          |
+| Lucid ORM     | 18.4    | ORM                |
+| PostgreSQL    | 15+     | Banco de dados     |
+| Redis         | 7.x     | Cache e filas      |
+| JWT (API)     | 8.x     | Autenticação       |
+| LucidFilter   | -       | Filtros dinâmicos  |
+
+### Frontend (redd-client-v2)
+
+| Tecnologia      | Versão | Uso                   |
+| --------------- | ------ | --------------------- |
+| Next.js         | 16.x   | Framework (App Router)|
+| React           | 19.x   | UI Library            |
+| TypeScript      | 5.x    | Linguagem             |
+| MUI             | 6.x    | Design System         |
+| MUI X DataGrid  | 7.x    | Tabelas               |
+| TanStack Query  | 5.x    | Server State          |
+| React Hook Form | 7.x    | Formulários           |
+| Zod             | 4.x    | Validação de schema   |
+| nuqs            | 2.x    | URL State Management  |
+| Axios           | 1.x    | HTTP Client           |
+| date-fns        | 3.x    | Manipulação de datas  |
+| @dnd-kit        | 6.x    | Drag and Drop         |
+| Sonner          | 1.x    | Toast notifications   |
+
+## Arquitetura
+
+### Backend
+```
+Request → Routes → Middleware → Controller → Validator → Service → Repository → Model → PostgreSQL
+```
+
+### Frontend
+```
+Page (SSR) → Client Component → Provider (nuqs + Context) → Hooks (TanStack Query) → API Resource (Axios) → Backend
+```
+
+## Principais Entidades
+
+| Entidade          | Descrição                    |
+| ----------------- | ---------------------------- |
+| `User`            | Usuários com roles e companies |
+| `Order`           | Pedidos de venda             |
+| `Purchase`        | Compras (itens do pedido)    |
+| `Production`      | Ordens de produção (Kanban)  |
+| `Budget`          | Orçamentos CRM              |
+| `Delivery`        | Entregas e logística         |
+| `Product`         | Produtos/Brindes             |
+| `ProductVariation`| Variações de produto         |
+| `Company`         | Empresas do grupo            |
+| `PhysicalSample`  | Amostras físicas             |
+
+## Roles do Sistema
+
+| Role                    | Enum | Descrição               |
+| ----------------------- | ---- | ----------------------- |
+| `SUPER_ADMIN`           | 1    | Acesso total            |
+| `ADMIN`                 | 2    | Administrador           |
+| `VENDAS`                | 3    | Vendedores              |
+| `COMPRAS`               | 4    | Equipe de compras       |
+| `PRODUCAO`              | 5    | Equipe de produção      |
+| `GERENTE_OPERACIONAL`   | -    | Gestão de operações     |
+| `FINANCEIRO`            | -    | Financeiro              |
+| `CADASTRO_DE_PRODUTOS`  | 27   | Cadastro de produtos    |
+
+## Padrões Fundamentais
+
+1. **Soft Delete**: Todas as entidades usam `deletedAt` — NUNCA hard delete
+2. **Idioma do código**: Inglês (variáveis, funções, classes)
+3. **Idioma das mensagens**: Português BR (erros, toasts, labels)
+4. **TypeScript strict**: `strict: true`, `noUncheckedIndexedAccess: true`
+5. **Paginação**: `{ currentPage, firstPage, lastPage, perPage, total, data: T[] }`
+6. **Lists endpoints**: `/lists/{type}` (categories, subcategories, colors, suppliers, etc.)

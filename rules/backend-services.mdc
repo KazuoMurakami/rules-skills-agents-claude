@@ -1,0 +1,156 @@
+---
+description: Padrões de Services - Regras de negócio, transactions, error handling e integrações
+globs: redd-api/app/Services/**/*.ts
+alwaysApply: false
+---
+
+# Padrões de Services
+
+## Quando Usar Services
+
+Services são para **regras de negócio complexas** que:
+- Envolvem múltiplos Repositories
+- Precisam de transactions (operações multi-tabela)
+- Têm lógica condicional complexa (state machines, validações de negócio)
+- Integram com serviços externos (webhooks, email, filas)
+- Processam dados em batch
+
+> Se é um CRUD simples, o Controller + Repository bastam. Não criar Service desnecessário.
+
+## Estrutura Base
+
+```typescript
+import EntityRepository from 'App/Repositories/{Domain}/EntityRepository';
+import RelatedRepository from 'App/Repositories/{Domain}/RelatedRepository';
+import HttpException from 'App/Exceptions/HttpException';
+import Logger from '@ioc:Adonis/Core/Logger';
+import Database from '@ioc:Adonis/Lucid/Database';
+
+export class EntityService {
+  private entityRepository: EntityRepository;
+  private relatedRepository: RelatedRepository;
+
+  constructor() {
+    this.entityRepository = new EntityRepository();
+    this.relatedRepository = new RelatedRepository();
+  }
+
+  public async processEntity(data: ProcessData): Promise<Entity> {
+    // 1. Validações de negócio
+    await this.validateBusinessRules(data);
+
+    // 2. Transaction para operações multi-tabela
+    const trx = await Database.transaction();
+    try {
+      const result = await this.executeLogic(data, trx);
+      await trx.commit();
+
+      // 3. Ações pós-processamento (fora da transaction)
+      await this.postProcess(result);
+
+      return result;
+    } catch (error) {
+      await trx.rollback();
+      Logger.error('EntityService.processEntity failed', { error, data });
+      throw error;
+    }
+  }
+
+  private async validateBusinessRules(data: ProcessData): Promise<void> {
+    const entity = await this.entityRepository.getOrFail(data.entityId);
+
+    if (entity.statusId !== StatusEnum.ACTIVE) {
+      throw new HttpException('Entidade não está ativa para esta operação', 422);
+    }
+  }
+}
+```
+
+## Padrão de State Machine (Transitions)
+
+```typescript
+export class EntityTransitionService {
+  private statusCache = new Map<number, Status>();
+
+  public async validateTransition(
+    entity: Entity,
+    targetStatusId: number,
+    payload: TransitionPayload
+  ): Promise<{ valid: boolean; errors: string[]; confirmations: string[] }> {
+    const errors: string[] = [];
+    const confirmations: string[] = [];
+
+    // Validar transição permitida
+    const allowedTransitions = this.getAllowedTransitions(entity.statusId);
+    if (!allowedTransitions.includes(targetStatusId)) {
+      errors.push('Transição de status não permitida');
+      return { valid: false, errors, confirmations };
+    }
+
+    // Validar campos obrigatórios para o status alvo
+    if (targetStatusId === StatusEnum.APPROVED && !payload.orderNumber) {
+      errors.push('Número do pedido é obrigatório para aprovação');
+    }
+
+    return { valid: errors.length === 0, errors, confirmations };
+  }
+}
+```
+
+## Nomenclatura de Services
+
+| Tipo                  | Padrão               | Exemplo                  |
+| --------------------- | -------------------- | ------------------------ |
+| Domínio               | `{Domain}Service`    | `OrderService`           |
+| Transições            | `{Domain}TransitionService` | `BudgetTransitionService` |
+| Integração externa    | `{Provider}Service`  | `SendGridService`        |
+| Processamento batch   | `{Action}Service`    | `ImportOrdersService`    |
+| Relatórios/export     | `{Domain}ExportService` | `OrderExportService`  |
+| Email                 | `{Domain}Mail`       | `NotificationMail`       |
+
+## Error Handling
+
+```typescript
+// ✅ BOM: Errors específicos com mensagens PT-BR
+throw new HttpException('Pedido não pode ser aprovado sem itens', 422);
+throw new HttpException('Orçamento não encontrado', 404);
+throw new HttpException('Você não tem permissão para esta ação', 403);
+
+// ✅ BOM: Log com contexto
+Logger.error('OrderService.approve failed', {
+  orderId: data.orderId,
+  userId: auth.user?.id,
+  error: error.message
+});
+
+// ❌ RUIM: Erro genérico sem contexto
+throw new Error('Something went wrong');
+// ❌ RUIM: console.log
+console.log('error', error);
+// ❌ RUIM: Catch vazio
+catch (e) { }
+```
+
+## Integração com Jobs/Filas
+
+```typescript
+import Queue from '@ioc:Adonis/Addons/Queue';
+
+public async scheduleProcess(data: JobData): Promise<void> {
+  await Queue.dispatch('App/Jobs/ProcessJob', data, {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 5000 }
+  });
+}
+```
+
+## Boas Práticas
+
+1. **NUNCA** acessar banco diretamente — usar Repositories
+2. **Transactions** em TODAS operações multi-tabela (commit/rollback)
+3. **Logger.error** com contexto (IDs, dados relevantes) — NUNCA `console.log`
+4. **HttpException** com mensagens em PT-BR e status HTTP correto
+5. **Métodos privados** para lógica auxiliar (validateBusinessRules, postProcess)
+6. **Injetar dependências** no constructor (repositories, services externos)
+7. **Ações pós-transaction** (email, cache invalidation) devem ser FORA do try/catch do trx
+8. **Cache de lookups frequentes** via `Map` quando dados são estáticos durante o request

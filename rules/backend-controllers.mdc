@@ -1,0 +1,133 @@
+---
+description: Padrões de Controllers - Orquestração, autorização, error handling e status HTTP
+globs: redd-api/app/Controllers/**/*.ts
+alwaysApply: false
+---
+
+# Padrões de Controllers
+
+## Estrutura Base
+
+Controllers estendem `Controller` que fornece CRUD padrão:
+
+```typescript
+import Controller from 'App/Controllers/Http/Controller';
+import EntityRepository from 'App/Repositories/{Domain}/EntityRepository';
+import EntityValidator from 'App/Validator/{Domain}/EntityValidator';
+
+export default class EntitiesController extends Controller {
+  protected repository: EntityRepository;
+  protected validator: EntityValidator;
+
+  constructor() {
+    super();
+    this.repository = new EntityRepository();
+    this.validator = new EntityValidator();
+  }
+}
+```
+
+O Controller base fornece: `index`, `show`, `store`, `update`, `destroy`.
+
+## Métodos Padrão (herdados)
+
+| Método    | HTTP   | Rota     | Status | Descrição       |
+| --------- | ------ | -------- | ------ | --------------- |
+| `index`   | GET    | `/`      | 200    | Lista paginada  |
+| `show`    | GET    | `/:id`   | 200    | Busca por ID    |
+| `store`   | POST   | `/`      | 201    | Criação         |
+| `update`  | PUT    | `/:id`   | 200    | Atualização     |
+| `destroy` | DELETE | `/:id`   | 200    | Soft delete     |
+
+## Métodos Customizados
+
+```typescript
+public async approve({ request, response, auth }: HttpContextContract) {
+  // 1. Validar input
+  const { id } = await this.validator.id(request);
+  const data = await this.validator.approve(request);
+
+  // 2. Verificar autorização
+  this.validateOwnership(auth.user!, id);
+
+  // 3. Executar via Service
+  const result = await this.service.approve(id, data, auth.user!);
+
+  // 4. Retornar com status correto
+  return response.status(200).json(result);
+}
+```
+
+## Autorização no Controller
+
+```typescript
+private validateOwnership(user: User, entityId?: number) {
+  const roles = user.roles.map(r => r.id);
+
+  // SUPER_ADMIN bypass
+  if (roles.includes(RoleEnum.SUPER_ADMIN)) return;
+
+  // Verificar role específica
+  if (!roles.includes(RoleEnum.GERENTE_OPERACIONAL)) {
+    throw new HttpException('Você não tem permissão para esta ação', 403);
+  }
+}
+
+// Filtro por seller (vendedor só vê o dele)
+public async index({ request, response, auth }: HttpContextContract) {
+  const user = auth.user!;
+  const roles = user.roles.map(r => r.id);
+
+  // Se não é admin, filtra por sellerId
+  if (!roles.includes(RoleEnum.SUPER_ADMIN)) {
+    request.updateQs({ ...request.qs(), sellerId: user.id });
+  }
+
+  return super.index({ request, response, auth });
+}
+```
+
+## Status HTTP Corretos
+
+| Status | Quando Usar                          |
+| ------ | ------------------------------------ |
+| 200    | GET, PUT, DELETE com sucesso         |
+| 201    | POST (criação) com sucesso           |
+| 400    | Request malformado                   |
+| 401    | Não autenticado                      |
+| 403    | Sem permissão                        |
+| 404    | Recurso não encontrado               |
+| 422    | Validação falhou / regra de negócio  |
+| 500    | Erro interno (não expor detalhes)    |
+
+## Error Handling
+
+```typescript
+// ✅ BOM: Erros específicos com tratamento
+public async customAction({ request, response }: HttpContextContract) {
+  try {
+    const result = await this.service.execute(data);
+    return response.status(200).json(result);
+  } catch (error) {
+    if (error instanceof HttpException) {
+      return response.status(error.status).json({ error: error.message });
+    }
+    // Re-throw para Handler global tratar
+    throw error;
+  }
+}
+
+// ❌ RUIM: Catch vazio ou log sem tratamento
+catch (e) { }
+catch (e) { console.error(e); }
+```
+
+## Boas Práticas
+
+1. **NÃO** colocar regras de negócio no Controller — delegar para Service
+2. **NÃO** acessar Model diretamente — usar Repository
+3. **SEMPRE** validar inputs via Validator antes de processar
+4. **SEMPRE** verificar autorização em endpoints sensíveis
+5. **Status HTTP** corretos para cada tipo de resposta
+6. **Mensagens de erro** em PT-BR via HttpException
+7. **viewRepository** opcional para read models separados (listagens)

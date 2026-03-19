@@ -1,0 +1,165 @@
+---
+description: Padrões de Repositories - Acesso a dados, queries otimizadas, preloads e transactions
+globs: redd-api/app/Repositories/**/*.ts
+alwaysApply: false
+---
+
+# Padrões de Repositories
+
+## Estrutura Base
+
+Repositories estendem `Repository<T>` genérico:
+
+```typescript
+import Repository from '../Repository';
+import Entity from 'App/Models/{Domain}/Entity';
+
+export default class EntityRepository extends Repository<Entity> {
+  protected model = Entity;
+
+  // Métodos customizados aqui
+}
+```
+
+## Métodos Herdados (Repository Base)
+
+| Método                | Descrição                              |
+| --------------------- | -------------------------------------- |
+| `filter(filter, list)` | Filtra com paginação ou lista completa |
+| `index()`             | Retorna todos os registros             |
+| `get(id, filter)`     | Busca por ID com filtros opcionais     |
+| `getOrFail(id)`       | Busca por ID ou lança NotFoundException |
+| `getOneBy(filter)`    | Primeiro registro que bate o filtro    |
+| `getBy(filter)`       | Todos registros que batem o filtro     |
+| `create(data, trx?)`  | Cria registro (com transaction opcional) |
+| `update(id, data)`    | Atualiza registro por ID               |
+| `destroy(id)`         | Soft delete (seta `deletedAt = now()`) |
+| `getIncludes(includes, model)` | Eager load de relações        |
+
+## Queries Otimizadas
+
+### Selecionar apenas colunas necessárias
+```typescript
+// ✅ BOM: Seleciona apenas o que precisa
+const sellers = await this.model
+  .query()
+  .select('id', 'first_name', 'last_name')
+  .whereNull('deleted_at');
+
+// ❌ RUIM: Traz todas as colunas
+const sellers = await this.model.query().whereNull('deleted_at');
+```
+
+### Preload com select (evitar N+1)
+```typescript
+// ✅ BOM: Preload com campos específicos
+const orders = await this.model
+  .query()
+  .preload('seller', (q) => q.select('id', 'first_name', 'last_name'))
+  .preload('status', (q) => q.select('id', 'name', 'color'))
+  .preload('purchases');
+
+// ❌ RUIM: Preload trazendo todos os campos
+const orders = await this.model.query().preload('seller').preload('status');
+```
+
+### Paginação eficiente
+```typescript
+public async list(ctx: HttpContextContract) {
+  const qs = ctx.request.qs();
+  const page = qs.page || 1;
+  const perPage = Math.min(qs.perPage || 25, 1000); // Limitar máximo
+
+  return this.model
+    .query()
+    .filter(qs)
+    .orderBy(this.parseOrderBy(qs.orderBy))
+    .preload('status', (q) => q.select('id', 'name'))
+    .paginate(page, perPage);
+}
+```
+
+### withCount para contagens (sem carregar relação)
+```typescript
+// ✅ Conta sem carregar os registros
+const products = await this.model
+  .query()
+  .withCount('variations')
+  .withCount('events');
+```
+
+## Métodos Customizados
+
+```typescript
+// Busca com relacionamentos
+public async getWithRelations(id: number): Promise<Entity> {
+  return this.model
+    .query()
+    .where('id', id)
+    .whereNull('deleted_at')
+    .preload('relation1', (q) => q.select('id', 'name'))
+    .preload('relation2')
+    .firstOrFail();
+}
+
+// Busca por campo específico
+public async findByExternalId(externalId: string): Promise<Entity | null> {
+  return this.model
+    .query()
+    .where('external_id', externalId)
+    .whereNull('deleted_at')
+    .first();
+}
+
+// Sync de ManyToMany
+public async create(data: any, trx?: TransactionClientContract): Promise<Entity> {
+  const entity = await super.create(data, trx);
+  if (data.roleIds?.length) {
+    await entity.related('roles').sync(data.roleIds);
+  }
+  return entity;
+}
+```
+
+## Transactions
+
+```typescript
+import Database from '@ioc:Adonis/Lucid/Database';
+
+public async createWithRelations(data: CreateData): Promise<Entity> {
+  const trx = await Database.transaction();
+
+  try {
+    const entity = await this.model.create(data, { client: trx });
+    await entity.related('items').createMany(data.items, { client: trx });
+    await trx.commit();
+    return entity;
+  } catch (error) {
+    await trx.rollback();
+    throw error;
+  }
+}
+```
+
+## Filter Pattern
+
+O projeto usa `adonis-lucid-filter` para filtros dinâmicos:
+
+```typescript
+// No repository:
+return this.model.query().filter(queryStringParams).paginate(page, perPage);
+
+// O Filter do Model processa automaticamente os parâmetros
+// Ex: ?search=teste → EntityFilter.search('teste')
+// Ex: ?statusId=1 → EntityFilter.statusId(1)
+```
+
+## Boas Práticas
+
+1. **SEMPRE** filtrar `deleted_at IS NULL` (base repo já faz, mas verificar queries raw)
+2. **Preload com select** — nunca `preload('user')` sem selecionar campos
+3. **Transactions** em operações que criam/atualizam múltiplas tabelas
+4. **NUNCA** colocar regras de negócio no Repository — apenas queries
+5. **Limitar paginação** — `Math.min(perPage, 1000)` para evitar OOM
+6. **Usar `firstOrFail()`** em vez de `first()` + check manual quando ID deve existir
+7. **Evitar N+1**: Prefira `preload()` a loops com query dentro
