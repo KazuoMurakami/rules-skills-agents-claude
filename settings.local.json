@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(frontend-design)",
+      "Skill(react-performance-patterns)",
+      "Skill(redd-backend-pattern)",
+      "Skill(redd-frontend-pattern)",
+      "Skill(redd-integration-guide)",
+      "Skill(sql-optimization-patterns)",
+      "mcp__plugin_context7_context7__query-docs",
+      "Bash(npx tsc:*)",
+      "Bash(ls:*)",
+      "Bash(jest)",
+      "Bash(vitest:*)",
+      "Bash(playwright)",
+      "Bash(cypress \")",
+      "Bash(pnpm add:*)",
+      "Bash(find:*)",
+      "Bash(xargs grep -l \"import:products\\\\|ImportProducts\")",
+      "Bash(cd \"/c/Users/otavi/OneDrive/Área de Trabalho/Cursos/redd-admin/redd-client-v2\" && for feature in src/components/features/*/; do echo \"=== $\\(basename \"$feature\"\\) ===\"; find \"$feature\" -type f \\\\\\( -name \"*.tsx\" -o -name \"*.ts\" \\\\\\) | sed 's|^src/components/features/||' | sort; done)",
+      "Bash(cd \"/c/Users/otavi/OneDrive/Área de Trabalho/Cursos/redd-admin/redd-client-v2\" && grep -l \"class.*Resource extends HttpClient\" src/lib/api/resources/*.ts | sed 's|.*resources/||' | sed 's|\\\\.ts||')",
+      "Bash(cd \"/c/Users/otavi/OneDrive/Área de Trabalho/Cursos/redd-admin/redd-client-v2\" && head -50 \"src/app/\\(dashboard\\)/nf-queue/page.tsx\")",
+      "Bash(cd \"/c/Users/otavi/OneDrive/Área de Trabalho/Cursos/redd-admin/redd-client-v2\" && head -25 \"src/app/\\(dashboard\\)/order-monitorings/page.tsx\")"
+    ]
+  }
+}
